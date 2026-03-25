@@ -19,6 +19,7 @@ type LogEntry struct {
 	MsgID            string    `json:"msgId"`   // Note: DB column is msgid
 	StructuredData   string    `json:"-"`       // Note: DB column is structured_data
 	Message          string    `json:"message"` // Note: DB column is msg
+	MessageFields    string    `json:"-"`       // Note: DB column is message_fields
 	Format           string    `json:"format"`
 	CEFVersion       string    `json:"cefVersion,omitempty"`
 	CEFDeviceVendor  string    `json:"cefDeviceVendor,omitempty"`
@@ -32,4 +33,5 @@ type LogEntry struct {
 	// Derived fields for API responses
 	ParsedStructuredData map[string]map[string]string `json:"structuredData,omitempty"` // Parsed form of StructuredData
 	ParsedCEFExtensions  map[string]string            `json:"cefExtensions,omitempty"`  // Parsed form of CEFExtensions
+	ParsedMessageFields  map[string]string            `json:"messageFields,omitempty"`  // Parsed form of MessageFields
 }

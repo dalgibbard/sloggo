@@ -1,7 +1,15 @@
 "use client";
 
+import { HotkeyKbd } from "@/components/custom/hotkey-kbd";
 import { useDataTable } from "@/components/data-table/data-table-provider";
 import { Button } from "@/components/ui/button";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { HOTKEYS } from "@/constants/hotkeys";
 import { useHotKey } from "@/hooks/use-hot-key";
 import { cn } from "@/lib/utils";
 import type { FetchPreviousPageOptions } from "@tanstack/react-query";
@@ -22,7 +30,7 @@ export function LiveButton({ fetchPreviousPage }: LiveButtonProps) {
   const [{ live, timestamp, sort }, setSearch] =
     useQueryStates(searchParamsParser);
   const { table } = useDataTable();
-  useHotKey(handleClick, "j");
+  useHotKey(handleClick, HOTKEYS.toggleLive);
 
   React.useEffect(() => {
     let timeoutId: NodeJS.Timeout;
@@ -63,18 +71,34 @@ export function LiveButton({ fetchPreviousPage }: LiveButtonProps) {
   }
 
   return (
-    <Button
-      className={cn(live && "border-info text-info hover:text-info")}
-      onClick={handleClick}
-      variant="outline"
-      size="sm"
-    >
-      {live ? (
-        <CirclePause className="mr-2 h-4 w-4" />
-      ) : (
-        <CirclePlay className="mr-2 h-4 w-4" />
-      )}
-      Live
-    </Button>
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <Button
+            className={cn(live && "border-info text-info hover:text-info")}
+            onClick={handleClick}
+            variant="outline"
+            size="sm"
+          >
+            {live ? (
+              <CirclePause className="mr-2 h-4 w-4" />
+            ) : (
+              <CirclePlay className="mr-2 h-4 w-4" />
+            )}
+            Live
+          </Button>
+        </TooltipTrigger>
+        <TooltipContent side="left">
+          <p>
+            Toggle live mode with
+            <HotkeyKbd
+              keys={HOTKEYS.toggleLive.keys}
+              className="ml-1"
+              kbdClassName="text-muted-foreground group-hover:text-accent-foreground"
+            />
+          </p>
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
   );
 }

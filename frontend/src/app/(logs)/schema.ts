@@ -16,6 +16,7 @@ export const columnSchema = z.object({
   message: z.string(),
   format: z.string(),
   structuredData: z.record(z.record(z.string())).optional(),
+  messageFields: z.record(z.string()).optional(),
   cefVersion: z.string().optional(),
   cefDeviceVendor: z.string().optional(),
   cefDeviceProduct: z.string().optional(),
@@ -25,6 +26,7 @@ export const columnSchema = z.object({
   cefSeverity: z.string().optional(),
   cefExtensions: z.record(z.string()).optional(),
   cefExt: z.record(z.string()).optional(),
+  msgField: z.record(z.string()).optional(),
 });
 
 export type ColumnSchema = z.infer<typeof columnSchema>;
@@ -59,6 +61,7 @@ export const columnFilterSchema = z.object({
   cefName: z.string().optional(),
   cefSeverity: z.string().optional(),
   cefExt: z.record(z.string()).optional(),
+  msgField: z.record(z.string()).optional(),
 });
 
 export type ColumnFilterSchema = z.infer<typeof columnFilterSchema>;

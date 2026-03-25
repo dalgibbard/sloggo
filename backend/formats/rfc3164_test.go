@@ -55,7 +55,7 @@ func TestParseRFC3164ToLogEntry_WithPID(t *testing.T) {
 }
 
 func TestParseRFC3164ToLogEntry_UniFiExtraHeaderToken(t *testing.T) {
-	line := `<30>Mar 25 20:31:35 UDM-Pro UDM-Pro dnsmasq-dhcp[5312]: Updating leases :: age=240sec file=y(3msec) dns=y(1msec)`
+	line := `<30>Mar 25 20:31:35 gateway-node gateway-node dnsmasq-dhcp[5312]: Updating leases :: age=240sec file=y(3msec) dns=y(1msec)`
 	entry, err := ParseRFC3164ToLogEntry(line)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -63,7 +63,7 @@ func TestParseRFC3164ToLogEntry_UniFiExtraHeaderToken(t *testing.T) {
 	if entry.Facility != 3 || entry.Severity != 6 {
 		t.Errorf("facility/severity mismatch: got (%d,%d)", entry.Facility, entry.Severity)
 	}
-	if entry.Hostname != "UDM-Pro" {
+	if entry.Hostname != "gateway-node" {
 		t.Errorf("hostname: got %q", entry.Hostname)
 	}
 	if entry.AppName != "dnsmasq-dhcp" {
@@ -79,7 +79,7 @@ func TestParseRFC3164ToLogEntry_UniFiExtraHeaderToken(t *testing.T) {
 }
 
 func TestParseRFC3164ToLogEntry_UniFiPathAppName(t *testing.T) {
-	line := `<28>Mar 25 20:31:28 UDM-Pro UDM-Pro /usr/bin/unifi-mq-broker[4024]: Failed to send request to coredns: Post "http://localhost/api/get_domain_by_ip": dial unix /run/utm/.cd_dl.sock: connect: resource temporarily unavailable`
+	line := `<28>Mar 25 20:31:28 gateway-node gateway-node /usr/bin/message-broker[4024]: Failed to send request to resolver: Post "http://localhost/api/get_domain_by_ip": dial unix /run/service/.resolver.sock: connect: resource temporarily unavailable`
 	entry, err := ParseRFC3164ToLogEntry(line)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -87,23 +87,23 @@ func TestParseRFC3164ToLogEntry_UniFiPathAppName(t *testing.T) {
 	if entry.Facility != 3 || entry.Severity != 4 {
 		t.Errorf("facility/severity mismatch: got (%d,%d)", entry.Facility, entry.Severity)
 	}
-	if entry.Hostname != "UDM-Pro" {
+	if entry.Hostname != "gateway-node" {
 		t.Errorf("hostname: got %q", entry.Hostname)
 	}
-	if entry.AppName != "/usr/bin/unifi-mq-broker" {
+	if entry.AppName != "/usr/bin/message-broker" {
 		t.Errorf("appname: got %q", entry.AppName)
 	}
 	if entry.ProcID != "4024" {
 		t.Errorf("procid: got %q", entry.ProcID)
 	}
-	expectedMsg := `Failed to send request to coredns: Post "http://localhost/api/get_domain_by_ip": dial unix /run/utm/.cd_dl.sock: connect: resource temporarily unavailable`
+	expectedMsg := `Failed to send request to resolver: Post "http://localhost/api/get_domain_by_ip": dial unix /run/service/.resolver.sock: connect: resource temporarily unavailable`
 	if entry.Message != expectedMsg {
 		t.Errorf("message mismatch:\nexpected: %q\n     got: %q", expectedMsg, entry.Message)
 	}
 }
 
 func TestParseRFC3164ToLogEntry_UniFiCEFWithoutPriority(t *testing.T) {
-	line := `Mar 25 20:41:15 UDM-Pro CEF:0|Ubiquiti|UniFi Network|10.2.97|544|Network Accessed|4|src=192.168.1.17 UNIFIcategory=Audit UNIFIhost=UDM Pro UNIFIaccessMethod=android UNIFIadmin=Darren Gibbard UNIFIutcTime=2026-03-25T20:41:15.475Z msg=Darren Gibbard accessed UniFi Network using the android. Source IP: 192.168.1.17`
+	line := `Mar 25 20:41:15 gateway-node CEF:0|Ubiquiti|UniFi Network|10.2.97|544|Network Accessed|4|src=198.51.100.17 UNIFIcategory=Audit UNIFIhost=Gateway Node UNIFIaccessMethod=android UNIFIadmin=Example Admin UNIFIutcTime=2026-03-25T20:41:15.475Z msg=Example Admin accessed UniFi Network using the android. Source IP: 198.51.100.17`
 	entry, err := ParseRFC3164ToLogEntry(line)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -111,7 +111,7 @@ func TestParseRFC3164ToLogEntry_UniFiCEFWithoutPriority(t *testing.T) {
 	if entry.Facility != 1 || entry.Severity != 6 {
 		t.Errorf("facility/severity mismatch: got (%d,%d)", entry.Facility, entry.Severity)
 	}
-	if entry.Hostname != "UDM-Pro" {
+	if entry.Hostname != "gateway-node" {
 		t.Errorf("hostname: got %q", entry.Hostname)
 	}
 	if entry.AppName != "-" {
@@ -120,7 +120,7 @@ func TestParseRFC3164ToLogEntry_UniFiCEFWithoutPriority(t *testing.T) {
 	if entry.ProcID != "-" {
 		t.Errorf("procid: got %q", entry.ProcID)
 	}
-	expectedMsg := `CEF:0|Ubiquiti|UniFi Network|10.2.97|544|Network Accessed|4|src=192.168.1.17 UNIFIcategory=Audit UNIFIhost=UDM Pro UNIFIaccessMethod=android UNIFIadmin=Darren Gibbard UNIFIutcTime=2026-03-25T20:41:15.475Z msg=Darren Gibbard accessed UniFi Network using the android. Source IP: 192.168.1.17`
+	expectedMsg := `CEF:0|Ubiquiti|UniFi Network|10.2.97|544|Network Accessed|4|src=198.51.100.17 UNIFIcategory=Audit UNIFIhost=Gateway Node UNIFIaccessMethod=android UNIFIadmin=Example Admin UNIFIutcTime=2026-03-25T20:41:15.475Z msg=Example Admin accessed UniFi Network using the android. Source IP: 198.51.100.17`
 	if entry.Message != expectedMsg {
 		t.Errorf("message mismatch:\nexpected: %q\n     got: %q", expectedMsg, entry.Message)
 	}

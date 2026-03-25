@@ -157,7 +157,7 @@ func TestEnsureLogsTableSchemaMigratesOldTable(t *testing.T) {
 	}
 	if _, err := db.ExecContext(context.Background(), `
 			INSERT INTO logs (severity, facility, version, timestamp, hostname, app_name, procid, msgid, structured_data, msg)
-			VALUES (5, 1, 1, ?, 'legacy-host', 'legacy-app', '123', 'legacy-id', '-', 'legacy message')
+			VALUES (5, 1, 1, ?, 'legacy-host', 'legacy-app', '123', 'legacy-id', '-', '{"type":"dnsAdBlock","protocol":"udp"}')
 		`, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
 		t.Fatalf("insert legacy row: %v", err)
 	}
@@ -171,18 +171,21 @@ func TestEnsureLogsTableSchemaMigratesOldTable(t *testing.T) {
 		t.Fatalf("get table columns: %v", err)
 	}
 
-	for _, column := range []string{"format", "cef_version", "cef_device_vendor", "cef_extensions"} {
+	for _, column := range []string{"message_fields", "format", "cef_version", "cef_device_vendor", "cef_extensions"} {
 		if !slices.Contains(columns, column) {
 			t.Fatalf("expected migrated column %q", column)
 		}
 	}
 
-	var format string
-	if err := db.QueryRowContext(context.Background(), `SELECT format FROM logs WHERE hostname = 'legacy-host'`).Scan(&format); err != nil {
+	var format, messageFields string
+	if err := db.QueryRowContext(context.Background(), `SELECT format, message_fields FROM logs WHERE hostname = 'legacy-host'`).Scan(&format, &messageFields); err != nil {
 		t.Fatalf("query migrated row: %v", err)
 	}
 	if format != "syslog" {
 		t.Fatalf("expected migrated format syslog, got %q", format)
+	}
+	if messageFields == "" {
+		t.Fatal("expected migrated message fields to be backfilled")
 	}
 
 	setupDatabaseTable(logsTableName)
@@ -192,8 +195,8 @@ func TestGetLogsWithCEFFilters(t *testing.T) {
 	resetLogsTable(t)
 
 	cefExtensions, err := json.Marshal(map[string]string{
-		"src":   "10.0.0.1",
-		"dst":   "2.1.2.2",
+		"src":   "198.51.100.10",
+		"dst":   "203.0.113.20",
 		"proto": "udp",
 	})
 	if err != nil {
@@ -252,7 +255,7 @@ func TestGetLogsWithCEFFilters(t *testing.T) {
 		"cefDeviceProduct": "threatmanager",
 		"cefSeverity":      "10",
 		"cefExt": map[string]string{
-			"src":   "10.0.0.1",
+			"src":   "198.51.100.10",
 			"proto": "udp",
 		},
 	}, "timestamp", "DESC")
@@ -275,8 +278,8 @@ func TestGetCEFExtensionKeys(t *testing.T) {
 	resetLogsTable(t)
 
 	for _, entry := range []models.LogEntry{
-		newCEFEntry("cef-1", map[string]string{"src": "10.0.0.1", "dst": "2.1.2.2"}),
-		newCEFEntry("cef-2", map[string]string{"src": "10.0.0.2", "proto": "udp"}),
+		newCEFEntry("cef-1", map[string]string{"src": "198.51.100.10", "dst": "203.0.113.20"}),
+		newCEFEntry("cef-2", map[string]string{"src": "198.51.100.11", "proto": "udp"}),
 		{
 			Severity:       6,
 			Facility:       16,
@@ -305,6 +308,141 @@ func TestGetCEFExtensionKeys(t *testing.T) {
 	}
 
 	expected := []string{"dst", "proto", "src"}
+	if len(keys) != len(expected) {
+		t.Fatalf("expected keys %v, got %v", expected, keys)
+	}
+	for i, key := range expected {
+		if keys[i] != key {
+			t.Fatalf("expected key %q at index %d, got %q", key, i, keys[i])
+		}
+	}
+}
+
+func TestGetLogsWithMessageFieldFilters(t *testing.T) {
+	resetLogsTable(t)
+
+	jsonMessage := `{"type":"dnsAdBlock","category":"ADVERTISEMENT","src_port":4287,"protocol":"udp"}`
+
+	entries := []models.LogEntry{
+		{
+			Severity:       6,
+			Facility:       16,
+			Version:        1,
+			Timestamp:      time.Now().UTC(),
+			Hostname:       "json-host",
+			AppName:        "collector",
+			ProcID:         "1",
+			MsgID:          "json-1",
+			StructuredData: "-",
+			Message:        jsonMessage,
+			Format:         "syslog",
+		},
+		{
+			Severity:       6,
+			Facility:       16,
+			Version:        1,
+			Timestamp:      time.Now().UTC().Add(-time.Minute),
+			Hostname:       "plain-host",
+			AppName:        "collector",
+			ProcID:         "2",
+			MsgID:          "plain-1",
+			StructuredData: "-",
+			Message:        "plain syslog payload",
+			Format:         "syslog",
+		},
+	}
+
+	for _, entry := range entries {
+		if err := StoreLog(entry); err != nil {
+			t.Fatalf("store log entry: %v", err)
+		}
+	}
+	if err := ProcessBatchStoreLogs(); err != nil {
+		t.Fatalf("process batch: %v", err)
+	}
+
+	logs, totalCount, filterCount, err := GetLogs(10, time.Time{}, "next", map[string]any{
+		"msgField": map[string]string{
+			"type":     "dnsAdBlock",
+			"protocol": "udp",
+		},
+	}, "timestamp", "DESC")
+	if err != nil {
+		t.Fatalf("get logs: %v", err)
+	}
+
+	if totalCount != 2 {
+		t.Fatalf("expected total count 2, got %d", totalCount)
+	}
+	if filterCount != 1 || len(logs) != 1 {
+		t.Fatalf("expected one filtered JSON log, got filterCount=%d len=%d", filterCount, len(logs))
+	}
+	if logs[0].Hostname != "json-host" {
+		t.Fatalf("expected json-host, got %q", logs[0].Hostname)
+	}
+	if logs[0].MessageFields == "" {
+		t.Fatal("expected message fields to be stored")
+	}
+}
+
+func TestGetMessageFieldKeys(t *testing.T) {
+	resetLogsTable(t)
+
+	for _, entry := range []models.LogEntry{
+		{
+			Severity:       6,
+			Facility:       16,
+			Version:        1,
+			Timestamp:      time.Now().UTC(),
+			Hostname:       "json-host-1",
+			AppName:        "collector",
+			ProcID:         "1",
+			MsgID:          "json-1",
+			StructuredData: "-",
+			Message:        `{"type":"dnsAdBlock","protocol":"udp"}`,
+			Format:         "syslog",
+		},
+		{
+			Severity:       6,
+			Facility:       16,
+			Version:        1,
+			Timestamp:      time.Now().UTC().Add(-time.Minute),
+			Hostname:       "json-host-2",
+			AppName:        "collector",
+			ProcID:         "2",
+			MsgID:          "json-2",
+			StructuredData: "-",
+			Message:        `{"type":"dnsAllow","src_ip":"198.51.100.17"}`,
+			Format:         "syslog",
+		},
+		{
+			Severity:       6,
+			Facility:       16,
+			Version:        1,
+			Timestamp:      time.Now().UTC().Add(-2 * time.Minute),
+			Hostname:       "plain-host",
+			AppName:        "collector",
+			ProcID:         "3",
+			MsgID:          "plain-1",
+			StructuredData: "-",
+			Message:        "plain syslog payload",
+			Format:         "syslog",
+		},
+	} {
+		if err := StoreLog(entry); err != nil {
+			t.Fatalf("store log entry: %v", err)
+		}
+	}
+	if err := ProcessBatchStoreLogs(); err != nil {
+		t.Fatalf("process batch: %v", err)
+	}
+
+	keys, err := GetMessageFieldKeys(nil)
+	if err != nil {
+		t.Fatalf("get message field keys: %v", err)
+	}
+
+	expected := []string{"protocol", "src_ip", "type"}
 	if len(keys) != len(expected) {
 		t.Fatalf("expected keys %v, got %v", expected, keys)
 	}

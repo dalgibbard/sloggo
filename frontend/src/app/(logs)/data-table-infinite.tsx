@@ -20,6 +20,7 @@ import type {
   SheetField,
 } from "@/components/data-table/types";
 import { Button } from "@/components/ui/button";
+import { HOTKEYS } from "@/constants/hotkeys";
 import { useHotKey } from "@/hooks/use-hot-key";
 import { useLocalStorage } from "@/hooks/use-local-storage";
 import { formatCompactNumber } from "@/lib/format";
@@ -306,7 +307,7 @@ export function DataTableInfinite<TData, TValue, TMeta>({
   useHotKey(() => {
     setColumnOrder(defaultColumnOrder);
     setColumnVisibility(defaultColumnVisibility);
-  }, "u");
+  }, HOTKEYS.resetColumns);
 
   return (
     <DataTableProvider

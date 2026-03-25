@@ -133,6 +133,13 @@ func LogsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if msgFieldStr := query.Get("msgField"); msgFieldStr != "" {
+		var msgField map[string]string
+		if err := json.Unmarshal([]byte(msgFieldStr), &msgField); err == nil && len(msgField) > 0 {
+			filters["msgField"] = msgField
+		}
+	}
+
 	// Facility filter
 	if facilityStr := query.Get("facility"); facilityStr != "" {
 		facilityValues := strings.Split(facilityStr, ",")
@@ -223,9 +230,10 @@ func LogsHandler(w http.ResponseWriter, r *http.Request) {
 	var facets map[string]db.FacetMetadata
 	var chartData []db.ChartDataPoint
 	var cefExtensionKeys []string
-	var logsErr, facetsErr, chartErr, cefKeysErr error
+	var messageFieldKeys []string
+	var logsErr, facetsErr, chartErr, cefKeysErr, msgKeysErr error
 
-	wg.Add(4)
+	wg.Add(5)
 
 	// Time for all database operations
 	queryStartTime := time.Now()
@@ -269,6 +277,15 @@ func LogsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
+	go func() {
+		defer wg.Done()
+		messageFieldKeys, msgKeysErr = db.GetMessageFieldKeys(filters)
+
+		if utils.Debug {
+			log.Printf("⚡️ GetMessageFieldKeys execution time: %v", time.Since(queryStartTime))
+		}
+	}()
+
 	// Wait for all goroutines to complete
 	wg.Wait()
 	if utils.Debug {
@@ -299,12 +316,19 @@ func LogsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if msgKeysErr != nil {
+		log.Printf("Error fetching message field keys: %v", msgKeysErr)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
 	// Process logs for API response format
 	processStartTime := time.Now()
 	for i := range logs {
 		// Parse structured data JSON if present
 		structData := make(map[string]map[string]string)
 		cefExtensions := make(map[string]string)
+		messageFields := make(map[string]string)
 
 		if logs[i].StructuredData != "" && logs[i].StructuredData != "-" {
 			// Attempt to parse the JSON data
@@ -320,6 +344,14 @@ func LogsHandler(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		logs[i].ParsedCEFExtensions = cefExtensions
+		if logs[i].MessageFields != "" && logs[i].MessageFields != "{}" {
+			if err := json.Unmarshal([]byte(logs[i].MessageFields), &messageFields); err != nil {
+				log.Printf("Error parsing message fields for row %d", logs[i].RowID)
+			}
+		} else if extracted := utils.ExtractJSONMessageFields(logs[i].Message); len(extracted) > 0 {
+			messageFields = extracted
+		}
+		logs[i].ParsedMessageFields = messageFields
 
 		// Ensure timestamp is properly formatted for JavaScript to parse
 		// This is already handled by Go's JSON marshaller, but making it explicit
@@ -351,6 +383,7 @@ func LogsHandler(w http.ResponseWriter, r *http.Request) {
 			Facets:         facets,
 			Metadata: map[string]any{
 				"cefExtensionKeys": cefExtensionKeys,
+				"messageFieldKeys": messageFieldKeys,
 			},
 		},
 		NextCursor: nextCursor,

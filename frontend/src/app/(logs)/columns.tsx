@@ -351,4 +351,24 @@ export const columns: ColumnDef<ColumnSchema>[] = [
       );
     },
   },
+  {
+    id: "msgField",
+    accessorFn: (row) => row.messageFields || {},
+    header: "Message Fields",
+    filterFn: matchCEFExtensions,
+    cell: ({ row }) => {
+      const value = row.getValue<ColumnSchema["messageFields"]>("msgField");
+      if (!value || Object.keys(value).length === 0) {
+        return <span className="text-muted-foreground">-</span>;
+      }
+
+      return (
+        <TextWithTooltip
+          text={Object.entries(value)
+            .map(([key, entryValue]) => `${key}=${entryValue}`)
+            .join(", ")}
+        />
+      );
+    },
+  },
 ];

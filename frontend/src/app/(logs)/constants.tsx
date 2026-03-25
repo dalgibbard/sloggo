@@ -13,6 +13,10 @@ import { getSeverityColor } from "@/lib/request/severity";
 import { cn } from "@/lib/utils";
 import { format } from "date-fns";
 import { parseCEFExtensionFilters, serializeCEFExtensionFilters } from "./cef";
+import {
+  parseMessageFieldFilters,
+  serializeMessageFieldFilters,
+} from "./message-fields";
 import type { LogsMeta } from "./query-options";
 import { type ColumnSchema } from "./schema";
 
@@ -158,6 +162,15 @@ export const filterFields = [
     placeholder: "src=10.0.0.1; proto=udp",
     parseInput: parseCEFExtensionFilters,
     serializeInput: serializeCEFExtensionFilters,
+  },
+  {
+    label: "Message Fields",
+    value: "msgField",
+    type: "input",
+    commandDisabled: true,
+    placeholder: "type=dnsAdBlock; protocol=udp",
+    parseInput: parseMessageFieldFilters,
+    serializeInput: serializeMessageFieldFilters,
   },
 ] satisfies DataTableFilterField<ColumnSchema>[];
 
@@ -334,6 +347,16 @@ export const sheetFields = [
       props.cefExtensions !== undefined &&
       Object.keys(props.cefExtensions).length > 0,
     component: (props) => <KVTable data={props.cefExtensions || {}} />,
+    className: "flex-col items-start w-full gap-1",
+  },
+  {
+    id: "messageFields",
+    label: "Message Fields",
+    type: "readonly",
+    condition: (props) =>
+      props.messageFields !== undefined &&
+      Object.keys(props.messageFields).length > 0,
+    component: (props) => <KVTable data={props.messageFields || {}} />,
     className: "flex-col items-start w-full gap-1",
   },
   {

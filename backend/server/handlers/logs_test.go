@@ -15,7 +15,7 @@ func TestLogsHandlerReturnsCEFFieldsAndMetadata(t *testing.T) {
 	clearLogsTable(t)
 
 	cefExtensions, err := json.Marshal(map[string]string{
-		"src":   "10.0.0.1",
+		"src":   "198.51.100.10",
 		"proto": "udp",
 	})
 	if err != nil {
@@ -66,7 +66,7 @@ func TestLogsHandlerReturnsCEFFieldsAndMetadata(t *testing.T) {
 		t.Fatalf("process batch: %v", err)
 	}
 
-	cefFilter, err := json.Marshal(map[string]string{"src": "10.0.0.1"})
+	cefFilter, err := json.Marshal(map[string]string{"src": "198.51.100.10"})
 	if err != nil {
 		t.Fatalf("marshal cef filter: %v", err)
 	}
@@ -96,7 +96,7 @@ func TestLogsHandlerReturnsCEFFieldsAndMetadata(t *testing.T) {
 	if entry.CEFName != "worm successfully stopped" {
 		t.Fatalf("expected cef name, got %q", entry.CEFName)
 	}
-	if entry.ParsedCEFExtensions["src"] != "10.0.0.1" {
+	if entry.ParsedCEFExtensions["src"] != "198.51.100.10" {
 		t.Fatalf("expected src extension, got %q", entry.ParsedCEFExtensions["src"])
 	}
 
@@ -167,6 +167,88 @@ func TestLogsHandlerSupportsExcludedStringFilters(t *testing.T) {
 	}
 	if response.Data[0].Hostname != "keep-host" {
 		t.Fatalf("expected keep-host, got %q", response.Data[0].Hostname)
+	}
+}
+
+func TestLogsHandlerReturnsMessageFieldsAndMetadata(t *testing.T) {
+	clearLogsTable(t)
+
+	for _, entry := range []models.LogEntry{
+		{
+			Severity:       6,
+			Facility:       16,
+			Version:        1,
+			Timestamp:      time.Now().UTC(),
+			Hostname:       "json-host",
+			AppName:        "collector",
+			ProcID:         "1",
+			MsgID:          "json-1",
+			StructuredData: "-",
+			Message:        `{"type":"dnsAdBlock","protocol":"udp","src_port":4287}`,
+			Format:         "syslog",
+		},
+		{
+			Severity:       6,
+			Facility:       16,
+			Version:        1,
+			Timestamp:      time.Now().UTC().Add(-time.Minute),
+			Hostname:       "plain-host",
+			AppName:        "collector",
+			ProcID:         "2",
+			MsgID:          "plain-1",
+			StructuredData: "-",
+			Message:        "plain syslog payload",
+			Format:         "syslog",
+		},
+	} {
+		if err := db.StoreLog(entry); err != nil {
+			t.Fatalf("store log entry: %v", err)
+		}
+	}
+	if err := db.ProcessBatchStoreLogs(); err != nil {
+		t.Fatalf("process batch: %v", err)
+	}
+
+	msgFilter, err := json.Marshal(map[string]string{"type": "dnsAdBlock"})
+	if err != nil {
+		t.Fatalf("marshal message field filter: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/logs?msgField="+url.QueryEscape(string(msgFilter)), nil)
+	w := httptest.NewRecorder()
+
+	LogsHandler(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", w.Code)
+	}
+
+	var response LogsResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	if len(response.Data) != 1 {
+		t.Fatalf("expected one JSON log, got %d", len(response.Data))
+	}
+
+	entry := response.Data[0]
+	if entry.Hostname != "json-host" {
+		t.Fatalf("expected json-host, got %q", entry.Hostname)
+	}
+	if entry.ParsedMessageFields["type"] != "dnsAdBlock" {
+		t.Fatalf("expected type field, got %q", entry.ParsedMessageFields["type"])
+	}
+	if entry.ParsedMessageFields["src_port"] != "4287" {
+		t.Fatalf("expected src_port field, got %q", entry.ParsedMessageFields["src_port"])
+	}
+
+	keys, ok := response.Meta.Metadata["messageFieldKeys"].([]any)
+	if !ok {
+		t.Fatalf("expected messageFieldKeys metadata, got %#v", response.Meta.Metadata["messageFieldKeys"])
+	}
+	if len(keys) != 3 {
+		t.Fatalf("expected three message field keys, got %d", len(keys))
 	}
 }
 

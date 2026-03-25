@@ -1,5 +1,6 @@
 "use client";
 
+import { HotkeyKbd } from "@/components/custom/hotkey-kbd";
 import { Kbd } from "@/components/custom/kbd";
 import { useDataTable } from "@/components/data-table/data-table-provider";
 import {
@@ -12,6 +13,7 @@ import {
   CommandSeparator,
 } from "@/components/ui/command";
 import { Separator } from "@/components/ui/separator";
+import { HOTKEYS } from "@/constants/hotkeys";
 import { useHotKey } from "@/hooks/use-hot-key";
 import { useLocalStorage } from "@/hooks/use-local-storage";
 import { formatCompactNumber } from "@/lib/format";
@@ -116,7 +118,7 @@ export function DataTableFilterCommand({
     }
   }, [columnFilters, filterFields, open]);
 
-  useHotKey(() => setOpen((open) => !open), "k");
+  useHotKey(() => setOpen((open) => !open), HOTKEYS.toggleCommand);
 
   useEffect(() => {
     if (open) {
@@ -146,10 +148,11 @@ export function DataTableFilterCommand({
             <span>Search data table...</span>
           )}
         </span>
-        <Kbd className="ml-auto text-muted-foreground group-hover:text-accent-foreground">
-          <span className="mr-1">⌘</span>
-          <span>K</span>
-        </Kbd>
+        <HotkeyKbd
+          keys={HOTKEYS.toggleCommand.keys}
+          className="ml-auto"
+          kbdClassName="text-muted-foreground group-hover:text-accent-foreground"
+        />
       </button>
       <Command
         className={cn(

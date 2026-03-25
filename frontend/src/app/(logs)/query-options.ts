@@ -8,6 +8,7 @@ import { searchParamsSerializer, type SearchParamsType } from "./search-params";
 
 export type LogsMeta = {
   cefExtensionKeys?: string[];
+  messageFieldKeys?: string[];
 };
 
 export type InfiniteQueryMeta<TMeta = Record<string, unknown>> = {

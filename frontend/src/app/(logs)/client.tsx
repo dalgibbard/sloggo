@@ -1,5 +1,6 @@
 "use client";
 
+import { HOTKEYS } from "@/constants/hotkeys";
 import { SEVERITY_VALUES } from "@/constants/severity";
 import { useHotKey } from "@/hooks/use-hot-key";
 import { getSeverityRowClassName } from "@/lib/request/severity";
@@ -49,11 +50,14 @@ export function Client() {
 
   const filterFields = React.useMemo(() => {
     return defaultFilterFields.map((field) => {
-      if (field.value === "cefExt") {
+      if (field.value === "cefExt" || field.value === "msgField") {
+        const metadataKeys =
+          field.value === "cefExt"
+            ? metadata?.cefExtensionKeys
+            : metadata?.messageFieldKeys;
         const placeholder =
-          metadata?.cefExtensionKeys?.length &&
-          metadata.cefExtensionKeys.length > 0
-            ? metadata.cefExtensionKeys
+          metadataKeys?.length && metadataKeys.length > 0
+            ? metadataKeys
                 .slice(0, 3)
                 .map((key) => `${key}=...`)
                 .join("; ")
@@ -80,7 +84,7 @@ export function Client() {
 
       return { ...field, options };
     });
-  }, [facets, metadata?.cefExtensionKeys]);
+  }, [facets, metadata?.cefExtensionKeys, metadata?.messageFieldKeys]);
 
   return (
     <DataTableInfinite
@@ -104,6 +108,7 @@ export function Client() {
         cefDeviceVersion: false,
         cefSignatureId: false,
         cefExt: false,
+        msgField: false,
       }}
       meta={metadata}
       filterFields={filterFields}
@@ -148,7 +153,7 @@ function useResetFocus() {
     document.body.setAttribute("tabindex", "0");
     document.body.focus();
     document.body.removeAttribute("tabindex");
-  }, ".");
+  }, HOTKEYS.resetFocus);
 }
 
 export function useLiveMode<TData extends { timestamp: Date; id: number }>(

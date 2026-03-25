@@ -108,6 +108,7 @@ func setupDatabaseTable(table string) {
 	    msgid TEXT,
 	    structured_data TEXT,
 	    msg TEXT,
+	    message_fields TEXT,
 	    format TEXT NOT NULL DEFAULT 'syslog',
 	    cef_version TEXT,
 	    cef_device_vendor TEXT,
@@ -142,6 +143,7 @@ func ensureLogsTableSchema(table string) error {
 	}
 
 	requiredColumns := []columnSpec{
+		{Name: "message_fields", AddDefinition: "TEXT"},
 		{Name: "format", AddDefinition: "TEXT"},
 		{Name: "cef_version", AddDefinition: "TEXT"},
 		{Name: "cef_device_vendor", AddDefinition: "TEXT"},
@@ -166,6 +168,10 @@ func ensureLogsTableSchema(table string) error {
 
 	if _, err := db.ExecContext(ctx, fmt.Sprintf("UPDATE %s SET format = 'syslog' WHERE format IS NULL OR format = ''", table)); err != nil {
 		return fmt.Errorf("backfill format column: %w", err)
+	}
+
+	if err := backfillMessageFields(table); err != nil {
+		return fmt.Errorf("backfill message_fields column: %w", err)
 	}
 
 	_, _ = db.ExecContext(ctx, fmt.Sprintf("ALTER TABLE %s ALTER COLUMN format SET DEFAULT 'syslog'", table))
@@ -211,6 +217,9 @@ func normalizeLogEntry(entry models.LogEntry) models.LogEntry {
 	}
 	if entry.StructuredData == "" {
 		entry.StructuredData = "-"
+	}
+	if entry.MessageFields == "" {
+		entry.MessageFields = utils.EncodeJSONMessageFields(entry.Message)
 	}
 	if entry.Timestamp.IsZero() {
 		entry.Timestamp = time.Now().UTC()
@@ -310,6 +319,7 @@ func processBatchStoreLogsWithEntries(entries []models.LogEntry) error {
 			entry.MsgID,
 			entry.StructuredData,
 			entry.Message,
+			entry.MessageFields,
 			entry.Format,
 			entry.CEFVersion,
 			entry.CEFDeviceVendor,
@@ -391,7 +401,7 @@ func GetLogs(limit int, cursor time.Time, direction string, filters map[string]a
 	filterQueryBuilder := strings.Builder{}
 	args := []any{}
 
-	queryBuilder.WriteString("SELECT rowid, facility, severity, version, timestamp, hostname, app_name, procid, msgid, structured_data, msg, format, cef_version, cef_device_vendor, cef_device_product, cef_device_version, cef_signature_id, cef_name, cef_severity, cef_extensions FROM logs ")
+	queryBuilder.WriteString("SELECT rowid, facility, severity, version, timestamp, hostname, app_name, procid, msgid, structured_data, msg, message_fields, format, cef_version, cef_device_vendor, cef_device_product, cef_device_version, cef_signature_id, cef_name, cef_severity, cef_extensions FROM logs ")
 	countQueryBuilder.WriteString("SELECT COUNT(*) FROM logs ")
 
 	whereClause := buildWhereClause(filters, cursor, direction, &args)
@@ -442,6 +452,7 @@ func GetLogs(limit int, cursor time.Time, direction string, filters map[string]a
 			&entry.MsgID,
 			&entry.StructuredData,
 			&entry.Message,
+			&entry.MessageFields,
 			&entry.Format,
 			&entry.CEFVersion,
 			&entry.CEFDeviceVendor,
@@ -746,6 +757,40 @@ func GetCEFExtensionKeys(filters map[string]any) ([]string, error) {
 	return keys, rows.Err()
 }
 
+func GetMessageFieldKeys(filters map[string]any) ([]string, error) {
+	ctx := context.Background()
+	queryBuilder := strings.Builder{}
+	queryBuilder.WriteString(`
+		SELECT DISTINCT field.key
+		FROM logs, json_each(COALESCE(NULLIF(message_fields, ''), '{}')) AS field
+	`)
+
+	args := []any{}
+	whereClause := buildWhereClause(filters, time.Time{}, "", &args)
+	if whereClause != "" {
+		queryBuilder.WriteString(" WHERE ")
+		queryBuilder.WriteString(whereClause)
+	}
+	queryBuilder.WriteString(" ORDER BY field.key ASC")
+
+	rows, err := db.QueryContext(ctx, queryBuilder.String(), args...)
+	if err != nil {
+		return nil, fmt.Errorf("error querying message field keys: %w", err)
+	}
+	defer rows.Close()
+
+	keys := []string{}
+	for rows.Next() {
+		var key string
+		if err := rows.Scan(&key); err != nil {
+			return nil, fmt.Errorf("error scanning message field key: %w", err)
+		}
+		keys = append(keys, key)
+	}
+
+	return keys, rows.Err()
+}
+
 func sanitizeSortField(sortField string) string {
 	switch sortField {
 	case "timestamp":
@@ -904,6 +949,15 @@ func buildWhereClause(filters map[string]any, cursor time.Time, direction string
 				conditions = append(conditions, "json_extract_string(COALESCE(NULLIF(cef_extensions, ''), '{}'), ?) = ?")
 				*args = append(*args, buildCEFJSONPath(key), extValue)
 			}
+		case "msgField":
+			messageFieldFilters, ok := getStringMapFilter(value)
+			if !ok {
+				continue
+			}
+			for key, fieldValue := range messageFieldFilters {
+				conditions = append(conditions, "json_extract_string(COALESCE(NULLIF(message_fields, ''), '{}'), ?) = ?")
+				*args = append(*args, buildCEFJSONPath(key), fieldValue)
+			}
 		case "startDate":
 			filterValue, ok := getTimeFilter(value)
 			if !ok {
@@ -975,6 +1029,56 @@ func getTimeFilter(value any) (time.Time, bool) {
 }
 
 func getCEFExtensionFilters(value any) (map[string]string, bool) {
+	return getStringMapFilter(value)
+}
+
+func getStringMapFilter(value any) (map[string]string, bool) {
 	filterValue, ok := value.(map[string]string)
 	return filterValue, ok
+}
+
+func backfillMessageFields(table string) error {
+	ctx := context.Background()
+	rows, err := db.QueryContext(ctx, fmt.Sprintf("SELECT rowid, msg FROM %s WHERE msg IS NOT NULL AND msg != '' AND (message_fields IS NULL OR message_fields = '')", table))
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = tx.Rollback()
+	}()
+
+	stmt, err := tx.PrepareContext(ctx, fmt.Sprintf("UPDATE %s SET message_fields = ? WHERE rowid = ?", table))
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	for rows.Next() {
+		var rowID int64
+		var message string
+		if err := rows.Scan(&rowID, &message); err != nil {
+			return err
+		}
+
+		messageFields := utils.EncodeJSONMessageFields(message)
+		if messageFields == "" {
+			continue
+		}
+
+		if _, err := stmt.ExecContext(ctx, messageFields, rowID); err != nil {
+			return err
+		}
+	}
+
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	return tx.Commit()
 }

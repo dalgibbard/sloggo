@@ -19,6 +19,10 @@ import {
   parseCEFExtensionFiltersFromQuery,
   serializeCEFExtensionFiltersForQuery,
 } from "./cef";
+import {
+  parseMessageFieldFiltersFromQuery,
+  serializeMessageFieldFiltersForQuery,
+} from "./message-fields";
 
 // https://logs.run/i?sort=priority.desc
 
@@ -42,6 +46,15 @@ export const parseAsCEFExt = createParser({
   },
 });
 
+export const parseAsMsgField = createParser({
+  parse(queryValue) {
+    return parseMessageFieldFiltersFromQuery(queryValue);
+  },
+  serialize(value) {
+    return serializeMessageFieldFiltersForQuery(value);
+  },
+});
+
 export const searchParamsParser = {
   // CUSTOM FILTERS
   facility: parseAsArrayOf(parseAsInteger, ARRAY_DELIMITER),
@@ -59,6 +72,7 @@ export const searchParamsParser = {
   cefName: parseAsString,
   cefSeverity: parseAsString,
   cefExt: parseAsCEFExt,
+  msgField: parseAsMsgField,
   timestamp: parseAsArrayOf(parseAsTimestamp, RANGE_DELIMITER),
   // REQUIRED FOR SORTING & PAGINATION
   cursor: parseAsTimestamp.withDefault(new Date()),

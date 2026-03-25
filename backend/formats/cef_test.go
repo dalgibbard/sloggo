@@ -10,7 +10,7 @@ import (
 
 func TestEnrichLogEntryWithCEFFromRFC5424(t *testing.T) {
 	parser := rfc5424.NewParser(rfc5424.WithBestEffort())
-	syslogMsg, err := parser.Parse([]byte("<165>1 2023-10-01T12:34:56Z host1 app1 2345 ID01 - CEF:0|Security|threatmanager|1.0|100|worm successfully stopped|10|src=10.0.0.1 dst=2.1.2.2 spt=1232"))
+	syslogMsg, err := parser.Parse([]byte("<165>1 2023-10-01T12:34:56Z host1 app1 2345 ID01 - CEF:0|Security|threatmanager|1.0|100|worm successfully stopped|10|src=198.51.100.10 dst=203.0.113.20 spt=1232"))
 	if err != nil {
 		t.Fatalf("parse rfc5424: %v", err)
 	}
@@ -38,13 +38,13 @@ func TestEnrichLogEntryWithCEFFromRFC5424(t *testing.T) {
 	if entry.CEFSeverity != "10" {
 		t.Fatalf("expected cef severity, got %q", entry.CEFSeverity)
 	}
-	if entry.ParsedCEFExtensions["src"] != "10.0.0.1" {
+	if entry.ParsedCEFExtensions["src"] != "198.51.100.10" {
 		t.Fatalf("expected src extension, got %q", entry.ParsedCEFExtensions["src"])
 	}
 }
 
 func TestEnrichLogEntryWithCEFFromRFC3164(t *testing.T) {
-	entry, err := ParseRFC3164ToLogEntry("<134>Feb  1 11:37:00 modbus-ble-bridge mdns: CEF:1|Acme|dns-gateway|2.5|dnsAdBlock|Blocked query|Medium|cat=ADVERTISEMENT request=firebaselogging.googleapis.com src=192.168.1.17 dst=127.0.0.1 proto=udp")
+	entry, err := ParseRFC3164ToLogEntry("<134>Feb  1 11:37:00 edge-bridge mdns: CEF:1|Acme|dns-gateway|2.5|dnsAdBlock|Blocked query|Medium|cat=ADVERTISEMENT request=telemetry.example.invalid src=198.51.100.17 dst=127.0.0.1 proto=udp")
 	if err != nil {
 		t.Fatalf("parse rfc3164: %v", err)
 	}
@@ -59,13 +59,13 @@ func TestEnrichLogEntryWithCEFFromRFC3164(t *testing.T) {
 	if entry.CEFDeviceVendor != "Acme" {
 		t.Fatalf("expected vendor Acme, got %q", entry.CEFDeviceVendor)
 	}
-	if entry.ParsedCEFExtensions["request"] != "firebaselogging.googleapis.com" {
+	if entry.ParsedCEFExtensions["request"] != "telemetry.example.invalid" {
 		t.Fatalf("expected request extension, got %q", entry.ParsedCEFExtensions["request"])
 	}
 }
 
 func TestEnrichLogEntryWithCEFFromRFC3164WithoutPriority(t *testing.T) {
-	entry, err := ParseRFC3164ToLogEntry(`Mar 25 20:41:15 UDM-Pro CEF:0|Ubiquiti|UniFi Network|10.2.97|544|Network Accessed|4|src=192.168.1.17 UNIFIcategory=Audit UNIFIhost=UDM Pro`)
+	entry, err := ParseRFC3164ToLogEntry(`Mar 25 20:41:15 gateway-node CEF:0|Ubiquiti|UniFi Network|10.2.97|544|Network Accessed|4|src=198.51.100.17 UNIFIcategory=Audit UNIFIhost=Gateway Node`)
 	if err != nil {
 		t.Fatalf("parse rfc3164 without priority: %v", err)
 	}
@@ -89,7 +89,7 @@ func TestEnrichLogEntryWithCEFFromRFC3164WithoutPriority(t *testing.T) {
 }
 
 func TestEnrichLogEntryWithCEFDecodesEscapes(t *testing.T) {
-	entry := testLogEntry("CEF:0|security|threatmanager|1.0|100|detected a \\| in message|10|src=10.0.0.1 act=blocked a \\= with \\\\ slash msg=Detected a threat.\\n No action needed filePath=/tmp/my file name.txt")
+	entry := testLogEntry("CEF:0|security|threatmanager|1.0|100|detected a \\| in message|10|src=198.51.100.10 act=blocked a \\= with \\\\ slash msg=Detected a threat.\\n No action needed filePath=/tmp/my file name.txt")
 
 	if err := EnrichLogEntryWithCEF(&entry); err != nil {
 		t.Fatalf("enrich cef: %v", err)
@@ -110,7 +110,7 @@ func TestEnrichLogEntryWithCEFDecodesEscapes(t *testing.T) {
 }
 
 func TestEnrichLogEntryWithCEFMalformedFallsBack(t *testing.T) {
-	entry := testLogEntry("CEF:0|security|threatmanager|1.0|100|detected a \\| in message|10|src=10.0.0.1")
+	entry := testLogEntry("CEF:0|security|threatmanager|1.0|100|detected a \\| in message|10|src=198.51.100.10")
 	entry.Message = "CEF:0|only|two"
 	entry.Format = "syslog"
 
