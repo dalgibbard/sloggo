@@ -221,6 +221,15 @@ export function DataTableInfinite<TData, TValue, TMeta>({
     meta: { getRowClassName },
   });
 
+  const rowLayoutSignature = React.useMemo(
+    () =>
+      JSON.stringify({
+        columnOrder,
+        columnVisibility,
+      }),
+    [columnOrder, columnVisibility],
+  );
+
   React.useEffect(() => {
     const normalizedColumnOrder = normalizeColumnOrder(
       columnOrder,
@@ -465,6 +474,7 @@ export function DataTableInfinite<TData, TValue, TMeta>({
                         row={row}
                         table={table}
                         selected={row.getIsSelected()}
+                        layoutSignature={rowLayoutSignature}
                       />
                     </React.Fragment>
                   ))
@@ -596,15 +606,18 @@ function Row<TData>({
   row,
   table,
   selected,
+  layoutSignature,
 }: {
   row: Row<TData>;
   table: TTable<TData>;
   // REMINDER: row.getIsSelected(); - just for memoization
   selected?: boolean;
+  layoutSignature: string;
 }) {
   // REMINDER: rerender the row when live mode is toggled - used to opacity the row
   // via the `getRowClassName` prop - but for some reasons it wil render the row on data fetch
   useQueryState("live", searchParamsParser.live);
+  void layoutSignature;
   return (
     <TableRow
       id={row.id}
@@ -641,5 +654,7 @@ function Row<TData>({
 const MemoizedRow = React.memo(
   Row,
   (prev, next) =>
-    prev.row.id === next.row.id && prev.selected === next.selected,
+    prev.row.id === next.row.id &&
+    prev.selected === next.selected &&
+    prev.layoutSignature === next.layoutSignature,
 ) as typeof Row;
