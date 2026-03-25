@@ -4,6 +4,7 @@ import { TextWithTooltip } from "@/components/custom/text-with-tooltip";
 import { DataTableColumnHeader } from "@/components/data-table/data-table-column-header";
 import { DataTableColumnSeverityIndicator } from "@/components/data-table/data-table-column/data-table-column-severity-indicator";
 import { SEVERITY_VALUES } from "@/constants/severity";
+import { matchCEFExtensions } from "@/lib/table/filterfns";
 import type { ColumnDef } from "@tanstack/react-table";
 import { HoverCardTimestamp } from "./_components/hover-card-timestamp";
 import type { ColumnSchema } from "./schema";
@@ -35,6 +36,14 @@ const FACILITY_NAMES = [
   "Local6",
   "Local7",
 ];
+
+function renderValue(value: string | undefined) {
+  if (!value) {
+    return <span className="text-muted-foreground">-</span>;
+  }
+
+  return <TextWithTooltip text={value} />;
+}
 
 export const columns: ColumnDef<ColumnSchema>[] = [
   {
@@ -114,6 +123,21 @@ export const columns: ColumnDef<ColumnSchema>[] = [
     },
   },
   {
+    accessorKey: "format",
+    header: "Format",
+    cell: ({ row }) => {
+      const value = row.getValue<ColumnSchema["format"]>("format");
+      return <span className="font-mono capitalize">{value}</span>;
+    },
+    size: 75,
+    minSize: 75,
+    meta: {
+      cellClassName:
+        "font-mono w-[--col-format-size] max-w-[--col-format-size]",
+      headerClassName: "min-w-[--header-format-size] w-[--header-format-size]",
+    },
+  },
+  {
     accessorKey: "hostname",
     header: "Hostname",
     cell: ({ row }) => {
@@ -175,6 +199,42 @@ export const columns: ColumnDef<ColumnSchema>[] = [
     },
   },
   {
+    accessorKey: "cefName",
+    header: "CEF Name",
+    cell: ({ row }) => {
+      const value = row.getValue<ColumnSchema["cefName"]>("cefName");
+      return renderValue(value);
+    },
+    size: 180,
+    minSize: 140,
+    meta: {
+      cellClassName:
+        "font-mono w-[--col-cefname-size] max-w-[--col-cefname-size]",
+      headerClassName:
+        "min-w-[--header-cefname-size] w-[--header-cefname-size]",
+    },
+  },
+  {
+    accessorKey: "cefSeverity",
+    header: "CEF Severity",
+    cell: ({ row }) => {
+      const value = row.getValue<ColumnSchema["cefSeverity"]>("cefSeverity");
+      return value ? (
+        <span className="font-mono">{value}</span>
+      ) : (
+        <span className="text-muted-foreground">-</span>
+      );
+    },
+    size: 90,
+    minSize: 90,
+    meta: {
+      cellClassName:
+        "font-mono w-[--col-cefseverity-size] max-w-[--col-cefseverity-size]",
+      headerClassName:
+        "min-w-[--header-cefseverity-size] w-[--header-cefseverity-size]",
+    },
+  },
+  {
     accessorKey: "message",
     header: "Message",
     cell: ({ row }) => {
@@ -219,6 +279,64 @@ export const columns: ColumnDef<ColumnSchema>[] = [
         "font-mono w-[--col-structureddata-size] max-w-[--col-structureddata-size]",
       headerClassName:
         "min-w-[--header-structureddata-size] w-[--header-structureddata-size]",
+    },
+  },
+  {
+    accessorKey: "cefVersion",
+    header: "CEF Version",
+    cell: ({ row }) =>
+      renderValue(row.getValue<ColumnSchema["cefVersion"]>("cefVersion")),
+  },
+  {
+    accessorKey: "cefDeviceVendor",
+    header: "CEF Vendor",
+    cell: ({ row }) =>
+      renderValue(
+        row.getValue<ColumnSchema["cefDeviceVendor"]>("cefDeviceVendor"),
+      ),
+  },
+  {
+    accessorKey: "cefDeviceProduct",
+    header: "CEF Product",
+    cell: ({ row }) =>
+      renderValue(
+        row.getValue<ColumnSchema["cefDeviceProduct"]>("cefDeviceProduct"),
+      ),
+  },
+  {
+    accessorKey: "cefDeviceVersion",
+    header: "CEF Device Version",
+    cell: ({ row }) =>
+      renderValue(
+        row.getValue<ColumnSchema["cefDeviceVersion"]>("cefDeviceVersion"),
+      ),
+  },
+  {
+    accessorKey: "cefSignatureId",
+    header: "CEF Signature ID",
+    cell: ({ row }) =>
+      renderValue(
+        row.getValue<ColumnSchema["cefSignatureId"]>("cefSignatureId"),
+      ),
+  },
+  {
+    id: "cefExt",
+    accessorFn: (row) => row.cefExtensions || {},
+    header: "CEF Extensions",
+    filterFn: matchCEFExtensions,
+    cell: ({ row }) => {
+      const value = row.getValue<ColumnSchema["cefExtensions"]>("cefExt");
+      if (!value || Object.keys(value).length === 0) {
+        return <span className="text-muted-foreground">-</span>;
+      }
+
+      return (
+        <TextWithTooltip
+          text={Object.entries(value)
+            .map(([key, entryValue]) => `${key}=${entryValue}`)
+            .join(", ")}
+        />
+      );
     },
   },
 ];

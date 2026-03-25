@@ -1,12 +1,12 @@
 "use client";
 
-import type { DataTableInputFilterField } from "./types";
 import { InputWithAddons } from "@/components/custom/input-with-addons";
+import { useDataTable } from "@/components/data-table/data-table-provider";
 import { Label } from "@/components/ui/label";
+import { useDebounce } from "@/hooks/use-debounce";
 import { Search } from "lucide-react";
 import { useEffect, useState } from "react";
-import { useDebounce } from "@/hooks/use-debounce";
-import { useDataTable } from "@/components/data-table/data-table-provider";
+import type { DataTableInputFilterField } from "./types";
 
 function getFilter(filterValue: unknown) {
   return typeof filterValue === "string" ? filterValue : null;
@@ -14,27 +14,34 @@ function getFilter(filterValue: unknown) {
 
 export function DataTableFilterInput<TData>({
   value: _value,
+  placeholder,
+  parseInput,
+  serializeInput,
 }: DataTableInputFilterField<TData>) {
   const value = _value as string;
   const { table, columnFilters } = useDataTable();
   const column = table.getColumn(value);
   const filterValue = columnFilters.find((i) => i.id === value)?.value;
-  const filters = getFilter(filterValue);
+  const filters = serializeInput?.(filterValue) ?? getFilter(filterValue) ?? "";
   const [input, setInput] = useState<string | null>(filters);
 
   const debouncedInput = useDebounce(input, 500);
 
   useEffect(() => {
-    const newValue = debouncedInput?.trim() === "" ? null : debouncedInput;
+    const newValue = parseInput
+      ? parseInput(debouncedInput || "")
+      : debouncedInput?.trim() === ""
+        ? null
+        : debouncedInput;
     if (debouncedInput === null) return;
-    column?.setFilterValue(newValue);
-  }, [debouncedInput]);
+    column?.setFilterValue(newValue ?? undefined);
+  }, [column, debouncedInput, parseInput]);
 
   useEffect(() => {
-    if (debouncedInput?.trim() !== filters) {
+    if ((debouncedInput ?? "") !== filters) {
       setInput(filters);
     }
-  }, [filters]);
+  }, [debouncedInput, filters]);
 
   return (
     <div className="grid w-full gap-1.5">
@@ -42,7 +49,7 @@ export function DataTableFilterInput<TData>({
         {value}
       </Label>
       <InputWithAddons
-        placeholder="Search"
+        placeholder={placeholder || "Search"}
         leading={<Search className="mt-0.5 h-4 w-4" />}
         containerClassName="h-9 rounded-lg"
         name={value}

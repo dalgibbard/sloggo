@@ -11,11 +11,11 @@ import (
 
 var Listeners []string
 
-var UdpPort string
+var UDPPort string
 
-var TcpPort string
+var TCPPort string
 
-var ApiPort string
+var APIPort string
 
 var LogRetentionMinutes int64
 
@@ -28,6 +28,7 @@ var Version string // Set via -X flag during build
 //   - "auto"   : try RFC5424 first, then RFC3164 (default)
 //   - "rfc5424": only parse as RFC5424
 //   - "rfc3164": only parse as RFC3164
+//
 // Any other value falls back to "auto".
 var logFormat string
 var logFormatMutex sync.RWMutex
@@ -48,9 +49,9 @@ func SetLogFormat(format string) {
 
 func init() {
 	Listeners = strings.Split(GetSanitizedEnvString("SLOGGO_LISTENERS", "tcp,udp"), ",")
-	UdpPort = GetSanitizedEnvString("SLOGGO_UDP_PORT", "5514")
-	TcpPort = GetSanitizedEnvString("SLOGGO_TCP_PORT", "6514")
-	ApiPort = GetSanitizedEnvString("SLOGGO_API_PORT", "8080")
+	UDPPort = GetSanitizedEnvString("SLOGGO_UDP_PORT", "5514")
+	TCPPort = GetSanitizedEnvString("SLOGGO_TCP_PORT", "6514")
+	APIPort = GetSanitizedEnvString("SLOGGO_API_PORT", "8080")
 	LogRetentionMinutes = GetSanitizedEnvInt64("SLOGGO_LOG_RETENTION_MINUTES", 30*24*60) // Default to 30 days
 	Debug = GetSanitizedEnvString("SLOGGO_DEBUG", "false") == "true"
 

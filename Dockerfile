@@ -26,7 +26,7 @@ COPY frontend/pnpm-lock.yaml frontend/package.json ./
 RUN pnpm fetch
 
 COPY frontend/ .
-RUN pnpm install --offline
+RUN CI=true pnpm install --offline --frozen-lockfile --config.confirmModulesPurge=false
 RUN pnpm exec next telemetry disable
 RUN pnpm build
 

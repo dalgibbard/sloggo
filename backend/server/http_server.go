@@ -1,11 +1,13 @@
 package server
 
 import (
+	"errors"
 	"log"
 	"net/http"
 	"os"
 	"sloggo/server/handlers"
 	"sloggo/utils"
+	"time"
 )
 
 type Server struct {
@@ -27,8 +29,9 @@ func (s *Server) setupRoutes() {
 	mux.Handle("/", handlers.StaticHandler(staticDir))
 
 	s.server = &http.Server{
-		Addr:    ":" + s.port,
-		Handler: mux,
+		Addr:              ":" + s.port,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
 	}
 }
 
@@ -51,7 +54,7 @@ func NewServer() *Server {
 	// Use environment variable for port if available
 	port := os.Getenv("SLOGGO_API_PORT")
 	if port == "" {
-		port = utils.ApiPort
+		port = utils.APIPort
 	}
 
 	return &Server{
@@ -63,7 +66,7 @@ func NewServer() *Server {
 func StartHTTPServer() {
 	server := NewServer()
 
-	if err := server.Start(); err != nil && err != http.ErrServerClosed {
+	if err := server.Start(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatal("Failed to start HTTP server:", err)
 	}
 }

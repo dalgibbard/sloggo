@@ -1,5 +1,4 @@
 import { infiniteQueryOptions, keepPreviousData } from "@tanstack/react-query";
-import SuperJSON from "superjson";
 import type {
   BaseChartSchema,
   ColumnSchema,
@@ -7,8 +6,8 @@ import type {
 } from "./schema";
 import { searchParamsSerializer, type SearchParamsType } from "./search-params";
 
-export type SyslogMeta = {
-  // Add any specific metadata from the Go API if needed
+export type LogsMeta = {
+  cefExtensionKeys?: string[];
 };
 
 export type InfiniteQueryMeta<TMeta = Record<string, unknown>> = {
@@ -74,7 +73,7 @@ export const dataOptions = (search: SearchParamsType) => {
         );
       }
 
-      return json as InfiniteQueryResponse<ColumnSchema[], SyslogMeta>;
+      return json as InfiniteQueryResponse<ColumnSchema[], LogsMeta>;
     },
     initialPageParam: { cursor: Date.now(), direction: "next" },
     getPreviousPageParam: (firstPage, _pages) => {

@@ -1,6 +1,7 @@
 package listener
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"sloggo/db"
@@ -60,7 +61,7 @@ func TestTCPListener(t *testing.T) {
 	testCases := getTestCases()
 
 	// Create a single connection for all test cases
-	conn, err := net.Dial("tcp", fmt.Sprintf("localhost:%d", port))
+	conn, err := (&net.Dialer{}).DialContext(context.Background(), "tcp", fmt.Sprintf("localhost:%d", port))
 	if err != nil {
 		t.Fatalf("Failed to connect to TCP listener: %v", err)
 	}

@@ -84,13 +84,53 @@ func LogsHandler(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Process ID filter
-	if procId := query.Get("procId"); procId != "" {
-		filters["procId"] = procId
+	if procID := query.Get("procId"); procID != "" {
+		filters["procId"] = procID
 	}
 
 	// Message ID filter
-	if msgId := query.Get("msgId"); msgId != "" {
-		filters["msgId"] = msgId
+	if msgID := query.Get("msgId"); msgID != "" {
+		filters["msgId"] = msgID
+	}
+
+	// Format filter
+	if format := query.Get("format"); format != "" {
+		filters["format"] = format
+	}
+
+	if cefVersion := query.Get("cefVersion"); cefVersion != "" {
+		filters["cefVersion"] = cefVersion
+	}
+
+	if cefDeviceVendor := query.Get("cefDeviceVendor"); cefDeviceVendor != "" {
+		filters["cefDeviceVendor"] = cefDeviceVendor
+	}
+
+	if cefDeviceProduct := query.Get("cefDeviceProduct"); cefDeviceProduct != "" {
+		filters["cefDeviceProduct"] = cefDeviceProduct
+	}
+
+	if cefDeviceVersion := query.Get("cefDeviceVersion"); cefDeviceVersion != "" {
+		filters["cefDeviceVersion"] = cefDeviceVersion
+	}
+
+	if cefSignatureID := query.Get("cefSignatureId"); cefSignatureID != "" {
+		filters["cefSignatureId"] = cefSignatureID
+	}
+
+	if cefName := query.Get("cefName"); cefName != "" {
+		filters["cefName"] = cefName
+	}
+
+	if cefSeverity := query.Get("cefSeverity"); cefSeverity != "" {
+		filters["cefSeverity"] = cefSeverity
+	}
+
+	if cefExtStr := query.Get("cefExt"); cefExtStr != "" {
+		var cefExt map[string]string
+		if err := json.Unmarshal([]byte(cefExtStr), &cefExt); err == nil && len(cefExt) > 0 {
+			filters["cefExt"] = cefExt
+		}
 	}
 
 	// Facility filter
@@ -182,9 +222,10 @@ func LogsHandler(w http.ResponseWriter, r *http.Request) {
 	var totalCount, filterCount int
 	var facets map[string]db.FacetMetadata
 	var chartData []db.ChartDataPoint
-	var logsErr, facetsErr, chartErr error
+	var cefExtensionKeys []string
+	var logsErr, facetsErr, chartErr, cefKeysErr error
 
-	wg.Add(3)
+	wg.Add(4)
 
 	// Time for all database operations
 	queryStartTime := time.Now()
@@ -219,6 +260,15 @@ func LogsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
+	go func() {
+		defer wg.Done()
+		cefExtensionKeys, cefKeysErr = db.GetCEFExtensionKeys(filters)
+
+		if utils.Debug {
+			log.Printf("⚡️ GetCEFExtensionKeys execution time: %v", time.Since(queryStartTime))
+		}
+	}()
+
 	// Wait for all goroutines to complete
 	wg.Wait()
 	if utils.Debug {
@@ -243,11 +293,18 @@ func LogsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if cefKeysErr != nil {
+		log.Printf("Error fetching CEF extension keys: %v", cefKeysErr)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
 	// Process logs for API response format
 	processStartTime := time.Now()
 	for i := range logs {
 		// Parse structured data JSON if present
 		structData := make(map[string]map[string]string)
+		cefExtensions := make(map[string]string)
 
 		if logs[i].StructuredData != "" && logs[i].StructuredData != "-" {
 			// Attempt to parse the JSON data
@@ -256,8 +313,13 @@ func LogsHandler(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// Calculate priority
 		logs[i].ParsedStructuredData = structData
+		if logs[i].CEFExtensions != "" && logs[i].CEFExtensions != "{}" {
+			if err := json.Unmarshal([]byte(logs[i].CEFExtensions), &cefExtensions); err != nil {
+				log.Printf("Error parsing CEF extensions for row %d", logs[i].RowID)
+			}
+		}
+		logs[i].ParsedCEFExtensions = cefExtensions
 
 		// Ensure timestamp is properly formatted for JavaScript to parse
 		// This is already handled by Go's JSON marshaller, but making it explicit
@@ -287,7 +349,9 @@ func LogsHandler(w http.ResponseWriter, r *http.Request) {
 			FilterRowCount: filterCount,
 			ChartData:      chartData,
 			Facets:         facets,
-			Metadata:       map[string]any{},
+			Metadata: map[string]any{
+				"cefExtensionKeys": cefExtensionKeys,
+			},
 		},
 		NextCursor: nextCursor,
 		PrevCursor: prevCursor,

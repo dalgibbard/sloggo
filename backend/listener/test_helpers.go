@@ -26,8 +26,8 @@ type testCase struct {
 }
 
 func checkSchema(t *testing.T) {
-	db := db.GetDBInstance()
-	rows, err := db.Query(`
+	database := db.GetDBInstance()
+	rows, err := database.Query(`
 		SELECT sql FROM sqlite_master
 		WHERE type='table' AND name='logs'
 	`)

@@ -23,3 +23,30 @@ export const arrSome: FilterFn<any> = (row, columnId, filterValue) => {
 };
 
 arrSome.autoRemove = (val: any) => !Array.isArray(val) || !val?.length;
+
+export const matchCEFExtensions: FilterFn<any> = (
+  row,
+  columnId,
+  filterValue,
+) => {
+  if (
+    !filterValue ||
+    typeof filterValue !== "object" ||
+    Array.isArray(filterValue)
+  ) {
+    return true;
+  }
+
+  const rowValue = row.getValue<Record<string, string> | undefined>(columnId);
+  if (!rowValue) return false;
+
+  return Object.entries(filterValue).every(([key, value]) => {
+    return rowValue[key] === value;
+  });
+};
+
+matchCEFExtensions.autoRemove = (val: any) =>
+  !val ||
+  typeof val !== "object" ||
+  Array.isArray(val) ||
+  Object.keys(val).length === 0;

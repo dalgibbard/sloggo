@@ -1,7 +1,9 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -120,7 +122,7 @@ func TestServerIntegration(t *testing.T) {
 	server := NewServer()
 	go func() {
 		err := server.Start()
-		if err != nil && err != http.ErrServerClosed {
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			t.Errorf("Server error: %v", err)
 		}
 	}()
@@ -176,11 +178,23 @@ func TestServerIntegration(t *testing.T) {
 
 			switch tc.method {
 			case "GET":
-				resp, err = http.Get(url)
+				req, reqErr := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
+				if reqErr != nil {
+					t.Fatalf("Failed to create GET request: %v", reqErr)
+				}
+				resp, err = http.DefaultClient.Do(req)
 			case "POST":
-				resp, err = http.Post(url, "application/json", nil)
+				req, reqErr := http.NewRequestWithContext(context.Background(), http.MethodPost, url, nil)
+				if reqErr != nil {
+					t.Fatalf("Failed to create POST request: %v", reqErr)
+				}
+				req.Header.Set("Content-Type", "application/json")
+				resp, err = http.DefaultClient.Do(req)
 			default:
-				req, _ := http.NewRequest(tc.method, url, nil)
+				req, reqErr := http.NewRequestWithContext(context.Background(), tc.method, url, nil)
+				if reqErr != nil {
+					t.Fatalf("Failed to create %s request: %v", tc.method, reqErr)
+				}
 				client := &http.Client{}
 				resp, err = client.Do(req)
 			}
@@ -229,7 +243,10 @@ func TestServerIntegration(t *testing.T) {
 	}
 
 	// Test method not allowed
-	postReq, _ := http.NewRequest("POST", fmt.Sprintf("http://localhost:%s/api/logs", testPort), nil)
+	postReq, err := http.NewRequestWithContext(context.Background(), http.MethodPost, fmt.Sprintf("http://localhost:%s/api/logs", testPort), nil)
+	if err != nil {
+		t.Fatalf("Failed to create POST request: %v", err)
+	}
 	client := &http.Client{}
 	postResp, err := client.Do(postReq)
 	if err != nil {
@@ -242,7 +259,11 @@ func TestServerIntegration(t *testing.T) {
 	}
 
 	// Test non-existent endpoint
-	notFoundResp, err := http.Get(fmt.Sprintf("http://localhost:%s/api/nonexistent", testPort))
+	notFoundReq, err := http.NewRequestWithContext(context.Background(), http.MethodGet, fmt.Sprintf("http://localhost:%s/api/nonexistent", testPort), nil)
+	if err != nil {
+		t.Fatalf("Failed to create GET request: %v", err)
+	}
+	notFoundResp, err := http.DefaultClient.Do(notFoundReq)
 	if err != nil {
 		t.Fatalf("Failed to make request to non-existent endpoint: %v", err)
 	}
@@ -253,7 +274,9 @@ func TestServerIntegration(t *testing.T) {
 	}
 
 	// Cleanup
-	server.Shutdown()
+	if err := server.Shutdown(); err != nil {
+		t.Fatalf("Failed to shutdown server: %v", err)
+	}
 }
 
 // Test creating a mock server and test the handler directly
@@ -265,7 +288,10 @@ func TestMockServer(t *testing.T) {
 	defer ts.Close()
 
 	// Test CORS headers
-	req, _ := http.NewRequest("OPTIONS", ts.URL+"/api/logs", nil)
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodOptions, ts.URL+"/api/logs", nil)
+	if err != nil {
+		t.Fatalf("Failed to create OPTIONS request: %v", err)
+	}
 	req.Header.Set("Origin", "http://example.com")
 	client := &http.Client{}
 	resp, err := client.Do(req)

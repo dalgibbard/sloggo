@@ -58,14 +58,14 @@ func SyslogMessageToLogEntry(msg *rfc5424.SyslogMessage) *models.LogEntry {
 		appName = *msg.Appname
 	}
 
-	procId := "-"
+	procID := "-"
 	if msg.ProcID != nil {
-		procId = *msg.ProcID
+		procID = *msg.ProcID
 	}
 
-	msgId := "-"
+	msgID := "-"
 	if msg.MsgID != nil {
-		msgId = *msg.MsgID
+		msgID = *msg.MsgID
 	}
 
 	// Format structured data
@@ -88,10 +88,11 @@ func SyslogMessageToLogEntry(msg *rfc5424.SyslogMessage) *models.LogEntry {
 		Timestamp:      timestamp,
 		Hostname:       hostname,
 		AppName:        appName,
-		ProcID:         procId,
-		MsgID:          msgId,
+		ProcID:         procID,
+		MsgID:          msgID,
 		StructuredData: structuredData,
 		Message:        msgContent,
+		Format:         "syslog",
 	}
 
 	return entry

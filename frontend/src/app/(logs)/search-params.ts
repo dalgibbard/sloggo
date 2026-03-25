@@ -1,9 +1,6 @@
-import { SEVERITY_VALUES } from "@/constants/severity";
-// Note: import from 'nuqs/server' to avoid the "use client" directive
 import {
   ARRAY_DELIMITER,
   RANGE_DELIMITER,
-  SLIDER_DELIMITER,
   SORT_DELIMITER,
 } from "@/lib/delimiters";
 import {
@@ -18,6 +15,10 @@ import {
   parseAsTimestamp,
   type inferParserType,
 } from "nuqs/server";
+import {
+  parseCEFExtensionFiltersFromQuery,
+  serializeCEFExtensionFiltersForQuery,
+} from "./cef";
 
 // https://logs.run/i?sort=priority.desc
 
@@ -32,6 +33,15 @@ export const parseAsSort = createParser({
   },
 });
 
+export const parseAsCEFExt = createParser({
+  parse(queryValue) {
+    return parseCEFExtensionFiltersFromQuery(queryValue);
+  },
+  serialize(value) {
+    return serializeCEFExtensionFiltersForQuery(value);
+  },
+});
+
 export const searchParamsParser = {
   // CUSTOM FILTERS
   facility: parseAsArrayOf(parseAsInteger, ARRAY_DELIMITER),
@@ -40,6 +50,15 @@ export const searchParamsParser = {
   appName: parseAsString,
   procId: parseAsString,
   msgId: parseAsString,
+  format: parseAsString,
+  cefVersion: parseAsString,
+  cefDeviceVendor: parseAsString,
+  cefDeviceProduct: parseAsString,
+  cefDeviceVersion: parseAsString,
+  cefSignatureId: parseAsString,
+  cefName: parseAsString,
+  cefSeverity: parseAsString,
+  cefExt: parseAsCEFExt,
   timestamp: parseAsArrayOf(parseAsTimestamp, RANGE_DELIMITER),
   // REQUIRED FOR SORTING & PAGINATION
   cursor: parseAsTimestamp.withDefault(new Date()),

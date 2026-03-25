@@ -1,6 +1,5 @@
 "use client";
 
-import { log } from "node:console";
 import { SEVERITY_VALUES } from "@/constants/severity";
 import { useHotKey } from "@/hooks/use-hot-key";
 import { getSeverityRowClassName } from "@/lib/request/severity";
@@ -13,7 +12,7 @@ import { LiveRow } from "./_components/live-row";
 import { columns } from "./columns";
 import { filterFields as defaultFilterFields, sheetFields } from "./constants";
 import { DataTableInfinite } from "./data-table-infinite";
-import { dataOptions } from "./query-options";
+import { dataOptions, type LogsMeta } from "./query-options";
 import type { FacetMetadataSchema } from "./schema";
 import { searchParamsParser } from "./search-params";
 
@@ -41,7 +40,7 @@ export function Client() {
   const lastPage = data?.pages?.[data?.pages.length - 1];
   const totalDBRowCount = lastPage?.meta?.totalRowCount;
   const filterDBRowCount = lastPage?.meta?.filterRowCount;
-  const metadata = lastPage?.meta?.metadata;
+  const metadata = lastPage?.meta?.metadata as LogsMeta | undefined;
   const chartData = lastPage?.meta?.chartData;
   const facets = lastPage?.meta?.facets;
   const totalFetched = flatData?.length;
@@ -50,6 +49,24 @@ export function Client() {
 
   const filterFields = React.useMemo(() => {
     return defaultFilterFields.map((field) => {
+      if (field.value === "cefExt") {
+        const placeholder =
+          metadata?.cefExtensionKeys?.length &&
+          metadata.cefExtensionKeys.length > 0
+            ? metadata.cefExtensionKeys
+                .slice(0, 3)
+                .map((key) => `${key}=...`)
+                .join("; ")
+            : "placeholder" in field
+              ? field.placeholder
+              : undefined;
+
+        return {
+          ...field,
+          placeholder,
+        };
+      }
+
       const facetsField = facets?.[field.value];
       if (!facetsField) return field;
       if (field.options && field.options.length > 0) return field;
@@ -63,7 +80,7 @@ export function Client() {
 
       return { ...field, options };
     });
-  }, [facets]);
+  }, [facets, metadata?.cefExtensionKeys]);
 
   return (
     <DataTableInfinite
@@ -80,7 +97,14 @@ export function Client() {
         .filter(({ value }) => value ?? undefined)}
       defaultColumnSorting={sort ? [sort] : undefined}
       defaultRowSelection={id ? { [id]: true } : undefined}
-      defaultColumnVisibility={{}}
+      defaultColumnVisibility={{
+        cefVersion: false,
+        cefDeviceVendor: false,
+        cefDeviceProduct: false,
+        cefDeviceVersion: false,
+        cefSignatureId: false,
+        cefExt: false,
+      }}
       meta={metadata}
       filterFields={filterFields}
       sheetFields={sheetFields}
@@ -108,7 +132,9 @@ export function Client() {
           return null;
         return <LiveRow />;
       }}
-      renderSheetTitle={(props) => props.row?.original.message}
+      renderSheetTitle={(props) =>
+        props.row?.original.cefName || props.row?.original.message
+      }
       searchParamsParser={searchParamsParser}
     />
   );

@@ -20,6 +20,9 @@ export type Option = {
 export type Input = {
   type: "input";
   options?: Option[];
+  placeholder?: string;
+  parseInput?: (value: string) => unknown;
+  serializeInput?: (value: unknown) => string;
 };
 
 export type Checkbox = {
@@ -83,7 +86,7 @@ export type SheetField<TData, TMeta = Record<string, unknown>> = {
         filterRows: number;
         totalRowsFetched: number;
       } & TMeta;
-    }
+    },
   ) => JSX.Element | null | string;
   condition?: (props: TData) => boolean;
   className?: string;

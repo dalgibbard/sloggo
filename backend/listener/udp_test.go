@@ -1,6 +1,7 @@
 package listener
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"sloggo/utils"
@@ -16,7 +17,7 @@ func sendUDPMessage(t *testing.T, addr string, message string) {
 	if !strings.HasSuffix(message, "\n") {
 		message += "\n"
 	}
-	conn, err := net.Dial("udp", addr)
+	conn, err := (&net.Dialer{}).DialContext(context.Background(), "udp", addr)
 	if err != nil {
 		t.Fatalf("Failed to create UDP connection: %v", err)
 	}

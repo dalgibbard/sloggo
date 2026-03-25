@@ -23,7 +23,11 @@ import { Button } from "@/components/ui/button";
 import { useHotKey } from "@/hooks/use-hot-key";
 import { useLocalStorage } from "@/hooks/use-local-storage";
 import { formatCompactNumber } from "@/lib/format";
-import { arrSome, inDateRange } from "@/lib/table/filterfns";
+import {
+  arrSome,
+  inDateRange,
+  matchCEFExtensions,
+} from "@/lib/table/filterfns";
 import { cn } from "@/lib/utils";
 import {
   FetchPreviousPageOptions,
@@ -207,7 +211,7 @@ export function DataTableInfinite<TData, TValue, TMeta>({
     getFacetedRowModel: getFacetedRowModel(),
     getFacetedUniqueValues: getTTableFacetedUniqueValues(),
     getFacetedMinMaxValues: getTTableFacetedMinMaxValues(),
-    filterFns: { inDateRange, arrSome },
+    filterFns: { inDateRange, arrSome, matchCEFExtensions },
     debugAll: process.env.NEXT_PUBLIC_TABLE_DEBUG === "true",
     meta: { getRowClassName },
   });
