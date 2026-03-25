@@ -109,6 +109,67 @@ func TestLogsHandlerReturnsCEFFieldsAndMetadata(t *testing.T) {
 	}
 }
 
+func TestLogsHandlerSupportsExcludedStringFilters(t *testing.T) {
+	clearLogsTable(t)
+
+	for _, entry := range []models.LogEntry{
+		{
+			Severity:       6,
+			Facility:       16,
+			Version:        1,
+			Timestamp:      time.Now().UTC(),
+			Hostname:       "keep-host",
+			AppName:        "collector",
+			ProcID:         "1",
+			MsgID:          "keep-1",
+			StructuredData: "-",
+			Message:        "keep me",
+			Format:         "syslog",
+		},
+		{
+			Severity:       6,
+			Facility:       16,
+			Version:        1,
+			Timestamp:      time.Now().UTC().Add(-time.Minute),
+			Hostname:       "drop-host",
+			AppName:        "collector",
+			ProcID:         "2",
+			MsgID:          "drop-1",
+			StructuredData: "-",
+			Message:        "drop me",
+			Format:         "syslog",
+		},
+	} {
+		if err := db.StoreLog(entry); err != nil {
+			t.Fatalf("store log entry: %v", err)
+		}
+	}
+	if err := db.ProcessBatchStoreLogs(); err != nil {
+		t.Fatalf("process batch: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/logs?hostname=%21drop-host", nil)
+	w := httptest.NewRecorder()
+
+	LogsHandler(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", w.Code)
+	}
+
+	var response LogsResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	if len(response.Data) != 1 {
+		t.Fatalf("expected one log, got %d", len(response.Data))
+	}
+	if response.Data[0].Hostname != "keep-host" {
+		t.Fatalf("expected keep-host, got %q", response.Data[0].Hostname)
+	}
+}
+
 func clearLogsTable(t *testing.T) {
 	t.Helper()
 

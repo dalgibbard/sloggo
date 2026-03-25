@@ -8,6 +8,8 @@ import { ColumnFiltersState } from "@tanstack/react-table";
 import { ParserBuilder } from "nuqs";
 import type { DataTableFilterField } from "../types";
 
+const NEGATION_PREFIX = "!";
+
 /**
  * Extracts the word from the given string at the specified caret position.
  */
@@ -41,6 +43,9 @@ export function replaceInputByFieldType<TData>({
   value: string;
   field: DataTableFilterField<TData>;
 }) {
+  const exclude = isNegatedCommandToken(currentWord);
+  const normalizedValue = applyCommandNegation(value, exclude);
+
   switch (field.type) {
     case "checkbox": {
       if (currentWord.includes(ARRAY_DELIMITER)) {
@@ -67,7 +72,7 @@ export function replaceInputByFieldType<TData>({
       }
     }
     default: {
-      const input = prev.replace(currentWord, value);
+      const input = prev.replace(currentWord, normalizedValue);
       return `${input.trim()} `;
     }
   }
@@ -106,24 +111,32 @@ export function getFilterValue({
   keywords?: string[] | undefined;
   currentWord: string;
 }): number {
+  const normalizedSearch = stripNegationPrefix(search.toLowerCase());
+  const normalizedCurrentWord = stripNegationPrefix(currentWord.toLowerCase());
+  const isNegationKeyword = currentWord.toUpperCase() === "NOT";
+
   /**
    * @example value "suggestion:public:true regions,ams,gru,fra"
    */
   if (value.startsWith("suggestion:")) {
     const rawValue = value.toLowerCase().replace("suggestion:", "");
-    if (rawValue.includes(search)) return 1;
+    if (isNegationKeyword || rawValue.includes(normalizedSearch)) return 1;
     return 0;
   }
 
   /** */
-  if (value.toLowerCase().includes(currentWord.toLowerCase())) return 1;
+  if (isNegationKeyword || value.toLowerCase().includes(normalizedCurrentWord))
+    return 1;
 
   /**
    * @example checkbox [filter, query] = ["regions", "ams,gru,fra"]
    * @example slider [filter, query] = ["p95", "0-3000"]
    * @example input [filter, query] = ["name", "api"]
    */
-  const [filter, query] = currentWord.toLowerCase().split(":");
+  const [filter, rawQuery] = normalizedCurrentWord.split(":");
+  const query = rawQuery?.startsWith(NEGATION_PREFIX)
+    ? rawQuery.slice(1)
+    : rawQuery;
   if (query && value.startsWith(`${filter}:`)) {
     if (query.includes(ARRAY_DELIMITER)) {
       /**
@@ -220,18 +233,7 @@ export function columnFiltersParser<TData>({
 }) {
   return {
     parse: (inputValue: string) => {
-      const values = inputValue
-        .trim()
-        .split(" ")
-        .reduce(
-          (prev, curr) => {
-            const [name, value] = curr.split(":");
-            if (!value || !name) return prev;
-            prev[name] = value;
-            return prev;
-          },
-          {} as Record<string, string>,
-        );
+      const values = parseCommandTokens({ inputValue, filterFields });
 
       const searchParams = Object.entries(values).reduce(
         (prev, [key, value]) => {
@@ -248,12 +250,19 @@ export function columnFiltersParser<TData>({
     },
     serialize: (columnFilters: ColumnFiltersState) => {
       const values = columnFilters.reduce((prev, curr) => {
-        const { commandDisabled } = filterFields?.find(
-          (field) => curr.id === field.value,
-        ) || { commandDisabled: true }; // if column filter is not found, disable the command by default
+        const field = filterFields?.find((field) => curr.id === field.value);
+        const { commandDisabled } = field || { commandDisabled: true }; // if column filter is not found, disable the command by default
         const parser = searchParamsParser[curr.id];
 
         if (commandDisabled || !parser) return prev;
+
+        if (field?.type === "input" && typeof curr.value === "string") {
+          const exclude = isNegatedFilterValue(curr.value);
+          const rawValue = exclude ? curr.value.slice(1) : curr.value;
+          const serializedValue = parser.serialize(rawValue);
+          const prefix = exclude ? NEGATION_PREFIX : "";
+          return `${prev}${prefix}${curr.id}:${serializedValue} `;
+        }
 
         return `${prev}${curr.id}:${parser.serialize(curr.value)} `;
       }, "");
@@ -261,4 +270,90 @@ export function columnFiltersParser<TData>({
       return values;
     },
   };
+}
+
+function parseCommandTokens<TData>({
+  inputValue,
+  filterFields,
+}: {
+  inputValue: string;
+  filterFields: DataTableFilterField<TData>[];
+}) {
+  const values = {} as Record<string, string>;
+  let negateNext = false;
+
+  for (const token of inputValue.trim().split(/\s+/).filter(notEmpty)) {
+    if (token.toUpperCase() === "NOT") {
+      negateNext = true;
+      continue;
+    }
+
+    const parsedToken = parseCommandToken({ token, negateNext, filterFields });
+    negateNext = false;
+
+    if (!parsedToken) continue;
+
+    values[parsedToken.name] = parsedToken.value;
+  }
+
+  return values;
+}
+
+function parseCommandToken<TData>({
+  token,
+  negateNext,
+  filterFields,
+}: {
+  token: string;
+  negateNext: boolean;
+  filterFields: DataTableFilterField<TData>[];
+}) {
+  const separatorIndex = token.indexOf(":");
+  if (separatorIndex <= 0) return null;
+
+  let name = token.slice(0, separatorIndex);
+  let value = token.slice(separatorIndex + 1);
+  let exclude = negateNext;
+
+  if (name.startsWith(NEGATION_PREFIX)) {
+    exclude = true;
+    name = name.slice(1);
+  }
+
+  if (value.startsWith(NEGATION_PREFIX)) {
+    exclude = true;
+    value = value.slice(1);
+  }
+
+  if (!name || !value) return null;
+
+  const field = filterFields.find((field) => String(field.value) === name);
+  if (exclude && field?.type !== "input") return null;
+
+  return {
+    name,
+    value: exclude ? `${NEGATION_PREFIX}${value}` : value,
+  };
+}
+
+function stripNegationPrefix(value: string) {
+  return value.startsWith(NEGATION_PREFIX) ? value.slice(1) : value;
+}
+
+function isNegatedCommandToken(value: string) {
+  if (value.startsWith(NEGATION_PREFIX)) return true;
+
+  const [, queryValue = ""] = value.split(":");
+  return queryValue.startsWith(NEGATION_PREFIX);
+}
+
+function applyCommandNegation(value: string, exclude: boolean) {
+  if (!exclude) return value;
+  return value.startsWith(NEGATION_PREFIX)
+    ? value
+    : `${NEGATION_PREFIX}${value}`;
+}
+
+function isNegatedFilterValue(value: string) {
+  return value.startsWith(NEGATION_PREFIX);
 }

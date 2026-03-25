@@ -4,7 +4,7 @@ import { TextWithTooltip } from "@/components/custom/text-with-tooltip";
 import { DataTableColumnHeader } from "@/components/data-table/data-table-column-header";
 import { DataTableColumnSeverityIndicator } from "@/components/data-table/data-table-column/data-table-column-severity-indicator";
 import { SEVERITY_VALUES } from "@/constants/severity";
-import { matchCEFExtensions } from "@/lib/table/filterfns";
+import { matchCEFExtensions, matchStringFilter } from "@/lib/table/filterfns";
 import type { ColumnDef } from "@tanstack/react-table";
 import { HoverCardTimestamp } from "./_components/hover-card-timestamp";
 import type { ColumnSchema } from "./schema";
@@ -125,6 +125,7 @@ export const columns: ColumnDef<ColumnSchema>[] = [
   {
     accessorKey: "format",
     header: "Format",
+    filterFn: matchStringFilter,
     cell: ({ row }) => {
       const value = row.getValue<ColumnSchema["format"]>("format");
       return <span className="font-mono capitalize">{value}</span>;
@@ -140,6 +141,7 @@ export const columns: ColumnDef<ColumnSchema>[] = [
   {
     accessorKey: "hostname",
     header: "Hostname",
+    filterFn: matchStringFilter,
     cell: ({ row }) => {
       const value = row.getValue<ColumnSchema["hostname"]>("hostname");
       return <TextWithTooltip text={value} />;
@@ -156,6 +158,7 @@ export const columns: ColumnDef<ColumnSchema>[] = [
   {
     accessorKey: "appName",
     header: "App Name",
+    filterFn: matchStringFilter,
     cell: ({ row }) => {
       const value = row.getValue<ColumnSchema["appName"]>("appName");
       return <TextWithTooltip text={value} />;
@@ -172,6 +175,7 @@ export const columns: ColumnDef<ColumnSchema>[] = [
   {
     accessorKey: "procId",
     header: "Proc ID",
+    filterFn: matchStringFilter,
     cell: ({ row }) => {
       const value = row.getValue<ColumnSchema["procId"]>("procId");
       return <span className="font-mono">{value}</span>;
@@ -187,6 +191,7 @@ export const columns: ColumnDef<ColumnSchema>[] = [
   {
     accessorKey: "msgId",
     header: "Msg ID",
+    filterFn: matchStringFilter,
     cell: ({ row }) => {
       const value = row.getValue<ColumnSchema["msgId"]>("msgId");
       return <span className="font-mono">{value}</span>;
@@ -201,6 +206,7 @@ export const columns: ColumnDef<ColumnSchema>[] = [
   {
     accessorKey: "cefName",
     header: "CEF Name",
+    filterFn: matchStringFilter,
     cell: ({ row }) => {
       const value = row.getValue<ColumnSchema["cefName"]>("cefName");
       return renderValue(value);
@@ -217,6 +223,7 @@ export const columns: ColumnDef<ColumnSchema>[] = [
   {
     accessorKey: "cefSeverity",
     header: "CEF Severity",
+    filterFn: matchStringFilter,
     cell: ({ row }) => {
       const value = row.getValue<ColumnSchema["cefSeverity"]>("cefSeverity");
       return value ? (
@@ -284,12 +291,14 @@ export const columns: ColumnDef<ColumnSchema>[] = [
   {
     accessorKey: "cefVersion",
     header: "CEF Version",
+    filterFn: matchStringFilter,
     cell: ({ row }) =>
       renderValue(row.getValue<ColumnSchema["cefVersion"]>("cefVersion")),
   },
   {
     accessorKey: "cefDeviceVendor",
     header: "CEF Vendor",
+    filterFn: matchStringFilter,
     cell: ({ row }) =>
       renderValue(
         row.getValue<ColumnSchema["cefDeviceVendor"]>("cefDeviceVendor"),
@@ -298,6 +307,7 @@ export const columns: ColumnDef<ColumnSchema>[] = [
   {
     accessorKey: "cefDeviceProduct",
     header: "CEF Product",
+    filterFn: matchStringFilter,
     cell: ({ row }) =>
       renderValue(
         row.getValue<ColumnSchema["cefDeviceProduct"]>("cefDeviceProduct"),
@@ -306,6 +316,7 @@ export const columns: ColumnDef<ColumnSchema>[] = [
   {
     accessorKey: "cefDeviceVersion",
     header: "CEF Device Version",
+    filterFn: matchStringFilter,
     cell: ({ row }) =>
       renderValue(
         row.getValue<ColumnSchema["cefDeviceVersion"]>("cefDeviceVersion"),
@@ -314,6 +325,7 @@ export const columns: ColumnDef<ColumnSchema>[] = [
   {
     accessorKey: "cefSignatureId",
     header: "CEF Signature ID",
+    filterFn: matchStringFilter,
     cell: ({ row }) =>
       renderValue(
         row.getValue<ColumnSchema["cefSignatureId"]>("cefSignatureId"),

@@ -1,39 +1,31 @@
-import { DropdownMenu } from "@/components/ui/dropdown-menu";
-
-import { Copy } from "lucide-react";
-
 import {
+  DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuSeparator,
-} from "@/components/ui/dropdown-menu";
-
-import {
   DropdownMenuGroup,
   DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-
-import { DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
+import { cn } from "@/lib/utils";
+import { Table } from "@tanstack/react-table";
+import { endOfDay, endOfHour, startOfDay, startOfHour } from "date-fns";
 import {
+  CalendarClock,
+  CalendarDays,
   CalendarSearch,
   ChevronLeft,
   ChevronRight,
+  Copy,
   Equal,
   Search,
+  X,
 } from "lucide-react";
-import { CalendarDays } from "lucide-react";
-import { startOfDay } from "date-fns";
-import { startOfHour } from "date-fns";
-import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
-import { endOfDay } from "date-fns";
-import { Table } from "@tanstack/react-table";
-import { CalendarClock } from "lucide-react";
-import { endOfHour } from "date-fns";
-import { cn } from "@/lib/utils";
 import { DataTableFilterField } from "../types";
 
 interface DataTableSheetRowActionProps<
   TData,
-  TFields extends DataTableFilterField<TData>
+  TFields extends DataTableFilterField<TData>,
 > extends React.ComponentPropsWithRef<typeof DropdownMenuTrigger> {
   fieldValue: TFields["value"];
   filterFields: TFields[];
@@ -43,7 +35,7 @@ interface DataTableSheetRowActionProps<
 
 export function DataTableSheetRowAction<
   TData,
-  TFields extends DataTableFilterField<TData>
+  TFields extends DataTableFilterField<TData>,
 >({
   fieldValue,
   filterFields,
@@ -84,10 +76,18 @@ export function DataTableSheetRowAction<
         );
       case "input":
         return (
-          <DropdownMenuItem onClick={() => column?.setFilterValue(value)}>
-            <Search />
-            Include
-          </DropdownMenuItem>
+          <DropdownMenuGroup>
+            <DropdownMenuItem onClick={() => column?.setFilterValue(value)}>
+              <Search />
+              Include
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onClick={() => column?.setFilterValue(`!${String(value)}`)}
+            >
+              <X />
+              Exclude
+            </DropdownMenuItem>
+          </DropdownMenuGroup>
         );
       case "slider":
         return (
@@ -153,7 +153,7 @@ export function DataTableSheetRowAction<
         className={cn(
           "rounded-md ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
           "relative",
-          className
+          className,
         )}
         onKeyDown={(e) => {
           if (e.key === "ArrowDown") {
@@ -168,7 +168,7 @@ export function DataTableSheetRowAction<
       >
         {children}
         {isCopied ? (
-          <div className="absolute inset-0 bg-background/70 place-content-center">
+          <div className="absolute inset-0 place-content-center bg-background/70">
             Value copied
           </div>
         ) : null}

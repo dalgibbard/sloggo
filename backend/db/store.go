@@ -824,89 +824,77 @@ func buildWhereClause(filters map[string]any, cursor time.Time, direction string
 				conditions = append(conditions, fmt.Sprintf("facility IN (%s)", strings.Join(placeholders, ",")))
 			}
 		case "hostname":
-			filterValue, ok := getStringFilter(value)
+			condition, ok := buildStringCondition("hostname", value, args)
 			if !ok {
 				continue
 			}
-			conditions = append(conditions, "hostname = ?")
-			*args = append(*args, filterValue)
+			conditions = append(conditions, condition)
 		case "procId":
-			filterValue, ok := getStringFilter(value)
+			condition, ok := buildStringCondition("procid", value, args)
 			if !ok {
 				continue
 			}
-			conditions = append(conditions, "procid = ?")
-			*args = append(*args, filterValue)
+			conditions = append(conditions, condition)
 		case "appName":
-			filterValue, ok := getStringFilter(value)
+			condition, ok := buildStringCondition("app_name", value, args)
 			if !ok {
 				continue
 			}
-			conditions = append(conditions, "app_name = ?")
-			*args = append(*args, filterValue)
+			conditions = append(conditions, condition)
 		case "msgId":
-			filterValue, ok := getStringFilter(value)
+			condition, ok := buildStringCondition("msgid", value, args)
 			if !ok {
 				continue
 			}
-			conditions = append(conditions, "msgid = ?")
-			*args = append(*args, filterValue)
+			conditions = append(conditions, condition)
 		case "format":
-			filterValue, ok := getStringFilter(value)
+			condition, ok := buildStringCondition("format", value, args)
 			if !ok {
 				continue
 			}
-			conditions = append(conditions, "format = ?")
-			*args = append(*args, filterValue)
+			conditions = append(conditions, condition)
 		case "cefVersion":
-			filterValue, ok := getStringFilter(value)
+			condition, ok := buildStringCondition("cef_version", value, args)
 			if !ok {
 				continue
 			}
-			conditions = append(conditions, "cef_version = ?")
-			*args = append(*args, filterValue)
+			conditions = append(conditions, condition)
 		case "cefDeviceVendor":
-			filterValue, ok := getStringFilter(value)
+			condition, ok := buildStringCondition("cef_device_vendor", value, args)
 			if !ok {
 				continue
 			}
-			conditions = append(conditions, "cef_device_vendor = ?")
-			*args = append(*args, filterValue)
+			conditions = append(conditions, condition)
 		case "cefDeviceProduct":
-			filterValue, ok := getStringFilter(value)
+			condition, ok := buildStringCondition("cef_device_product", value, args)
 			if !ok {
 				continue
 			}
-			conditions = append(conditions, "cef_device_product = ?")
-			*args = append(*args, filterValue)
+			conditions = append(conditions, condition)
 		case "cefDeviceVersion":
-			filterValue, ok := getStringFilter(value)
+			condition, ok := buildStringCondition("cef_device_version", value, args)
 			if !ok {
 				continue
 			}
-			conditions = append(conditions, "cef_device_version = ?")
-			*args = append(*args, filterValue)
+			conditions = append(conditions, condition)
 		case "cefSignatureId":
-			filterValue, ok := getStringFilter(value)
+			condition, ok := buildStringCondition("cef_signature_id", value, args)
 			if !ok {
 				continue
 			}
-			conditions = append(conditions, "cef_signature_id = ?")
-			*args = append(*args, filterValue)
+			conditions = append(conditions, condition)
 		case "cefName":
-			filterValue, ok := getStringFilter(value)
+			condition, ok := buildStringCondition("cef_name", value, args)
 			if !ok {
 				continue
 			}
-			conditions = append(conditions, "cef_name = ?")
-			*args = append(*args, filterValue)
+			conditions = append(conditions, condition)
 		case "cefSeverity":
-			filterValue, ok := getStringFilter(value)
+			condition, ok := buildStringCondition("cef_severity", value, args)
 			if !ok {
 				continue
 			}
-			conditions = append(conditions, "cef_severity = ?")
-			*args = append(*args, filterValue)
+			conditions = append(conditions, condition)
 		case "cefExt":
 			extensionFilters, ok := getCEFExtensionFilters(value)
 			if !ok {
@@ -954,6 +942,26 @@ func buildCEFJSONPath(key string) string {
 func getStringFilter(value any) (string, bool) {
 	filterValue, ok := value.(string)
 	return filterValue, ok
+}
+
+func buildStringCondition(column string, value any, args *[]any) (string, bool) {
+	filterValue, ok := getStringFilter(value)
+	if !ok || filterValue == "" {
+		return "", false
+	}
+
+	if strings.HasPrefix(filterValue, "!") {
+		excludedValue := strings.TrimPrefix(filterValue, "!")
+		if excludedValue == "" {
+			return "", false
+		}
+
+		*args = append(*args, excludedValue)
+		return fmt.Sprintf("%s IS DISTINCT FROM ?", column), true
+	}
+
+	*args = append(*args, filterValue)
+	return fmt.Sprintf("%s = ?", column), true
 }
 
 func getIntSliceFilter(value any) ([]int, bool) {

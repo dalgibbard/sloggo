@@ -361,6 +361,12 @@ export function DataTableFilterCommand({
                 <span>
                   Range: <Kbd variant="outline">p95:59-340</Kbd>
                 </span>
+                <span>
+                  Exclude: <Kbd variant="outline">!hostname:router</Kbd>
+                </span>
+                <span>
+                  Exclude: <Kbd variant="outline">NOT hostname:router</Kbd>
+                </span>
               </div>
               {lastSearches.length ? (
                 <button

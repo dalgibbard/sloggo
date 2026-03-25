@@ -138,6 +138,10 @@ export function DataTableInfinite<TData, TValue, TMeta>({
   renderSheetTitle,
   searchParamsParser,
 }: DataTableInfiniteProps<TData, TValue, TMeta>) {
+  const defaultColumnOrder = React.useMemo(
+    () => columns.map((column, index) => getColumnDefID(column, index)),
+    [columns],
+  );
   const [columnFilters, setColumnFilters] =
     React.useState<ColumnFiltersState>(defaultColumnFilters);
   const [sorting, setSorting] =
@@ -146,7 +150,7 @@ export function DataTableInfinite<TData, TValue, TMeta>({
     React.useState<RowSelectionState>(defaultRowSelection);
   const [columnOrder, setColumnOrder] = useLocalStorage<string[]>(
     "data-table-column-order",
-    [],
+    defaultColumnOrder,
   );
   const [columnVisibility, setColumnVisibility] =
     useLocalStorage<VisibilityState>(
@@ -215,6 +219,17 @@ export function DataTableInfinite<TData, TValue, TMeta>({
     debugAll: process.env.NEXT_PUBLIC_TABLE_DEBUG === "true",
     meta: { getRowClassName },
   });
+
+  React.useEffect(() => {
+    const normalizedColumnOrder = normalizeColumnOrder(
+      columnOrder,
+      defaultColumnOrder,
+    );
+
+    if (!areStringArraysEqual(columnOrder, normalizedColumnOrder)) {
+      setColumnOrder(normalizedColumnOrder);
+    }
+  }, [columnOrder, defaultColumnOrder, setColumnOrder]);
 
   React.useEffect(() => {
     const columnFiltersWithNullable = filterFields.map((field) => {
@@ -289,7 +304,7 @@ export function DataTableInfinite<TData, TValue, TMeta>({
   ]);
 
   useHotKey(() => {
-    setColumnOrder([]);
+    setColumnOrder(defaultColumnOrder);
     setColumnVisibility(defaultColumnVisibility);
   }, "u");
 
@@ -457,7 +472,7 @@ export function DataTableInfinite<TData, TValue, TMeta>({
                     {renderLiveRow?.()}
                     <TableRow>
                       <TableCell
-                        colSpan={columns.length}
+                        colSpan={table.getVisibleLeafColumns().length}
                         className="h-24 text-center"
                       >
                         No results.
@@ -466,7 +481,10 @@ export function DataTableInfinite<TData, TValue, TMeta>({
                   </React.Fragment>
                 )}
                 <TableRow className="hover:bg-transparent data-[state=selected]:bg-transparent">
-                  <TableCell colSpan={columns.length} className="text-center">
+                  <TableCell
+                    colSpan={table.getVisibleLeafColumns().length}
+                    className="text-center"
+                  >
                     {hasNextPage || isFetching || isLoading ? (
                       <Button
                         disabled={isFetching || isLoading}
@@ -521,6 +539,50 @@ export function DataTableInfinite<TData, TValue, TMeta>({
       </DataTableSheetDetails>
     </DataTableProvider>
   );
+}
+
+function getColumnDefID<TData, TValue>(
+  column: ColumnDef<TData, TValue>,
+  index: number,
+) {
+  if ("id" in column && typeof column.id === "string") return column.id;
+  if (
+    "accessorKey" in column &&
+    typeof column.accessorKey === "string" &&
+    column.accessorKey.length > 0
+  ) {
+    return column.accessorKey;
+  }
+
+  return `column-${index}`;
+}
+
+function normalizeColumnOrder(
+  columnOrder: string[],
+  defaultColumnOrder: string[],
+) {
+  const allowedColumnIDs = new Set(defaultColumnOrder);
+  const nextColumnOrder = columnOrder.filter((id) => allowedColumnIDs.has(id));
+
+  for (const columnID of defaultColumnOrder) {
+    if (!nextColumnOrder.includes(columnID)) {
+      nextColumnOrder.push(columnID);
+    }
+  }
+
+  return nextColumnOrder;
+}
+
+function areStringArraysEqual(left: string[], right: string[]) {
+  if (left.length !== right.length) return false;
+
+  for (let index = 0; index < left.length; index += 1) {
+    if (left[index] !== right[index]) {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 /**

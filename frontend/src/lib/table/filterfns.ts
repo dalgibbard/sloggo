@@ -24,6 +24,29 @@ export const arrSome: FilterFn<any> = (row, columnId, filterValue) => {
 
 arrSome.autoRemove = (val: any) => !Array.isArray(val) || !val?.length;
 
+export const matchStringFilter: FilterFn<any> = (
+  row,
+  columnId,
+  filterValue,
+) => {
+  if (typeof filterValue !== "string" || filterValue.length === 0) {
+    return true;
+  }
+
+  const rowValue = row.getValue<string | null | undefined>(columnId);
+
+  if (filterValue.startsWith("!")) {
+    const excludedValue = filterValue.slice(1);
+    if (!excludedValue) return true;
+    return rowValue !== excludedValue;
+  }
+
+  return rowValue === filterValue;
+};
+
+matchStringFilter.autoRemove = (val: any) =>
+  typeof val !== "string" || val.length === 0 || val === "!";
+
 export const matchCEFExtensions: FilterFn<any> = (
   row,
   columnId,

@@ -315,6 +315,68 @@ func TestGetCEFExtensionKeys(t *testing.T) {
 	}
 }
 
+func TestGetLogsWithExcludedStringFilter(t *testing.T) {
+	resetLogsTable(t)
+
+	entries := []models.LogEntry{
+		{
+			Severity:       6,
+			Facility:       16,
+			Version:        1,
+			Timestamp:      time.Now().UTC(),
+			Hostname:       "keep-host",
+			AppName:        "collector",
+			ProcID:         "1",
+			MsgID:          "keep-1",
+			StructuredData: "-",
+			Message:        "keep me",
+			Format:         "syslog",
+		},
+		{
+			Severity:       6,
+			Facility:       16,
+			Version:        1,
+			Timestamp:      time.Now().UTC().Add(-time.Minute),
+			Hostname:       "drop-host",
+			AppName:        "collector",
+			ProcID:         "2",
+			MsgID:          "drop-1",
+			StructuredData: "-",
+			Message:        "drop me",
+			Format:         "syslog",
+		},
+	}
+
+	for _, entry := range entries {
+		if err := StoreLog(entry); err != nil {
+			t.Fatalf("store log entry: %v", err)
+		}
+	}
+	if err := ProcessBatchStoreLogs(); err != nil {
+		t.Fatalf("process batch: %v", err)
+	}
+
+	logs, totalCount, filterCount, err := GetLogs(10, time.Time{}, "next", map[string]any{
+		"hostname": "!drop-host",
+	}, "timestamp", "DESC")
+	if err != nil {
+		t.Fatalf("get logs: %v", err)
+	}
+
+	if totalCount != 2 {
+		t.Fatalf("expected total count 2, got %d", totalCount)
+	}
+	if filterCount != 1 {
+		t.Fatalf("expected filtered count 1, got %d", filterCount)
+	}
+	if len(logs) != 1 {
+		t.Fatalf("expected one log, got %d", len(logs))
+	}
+	if logs[0].Hostname != "keep-host" {
+		t.Fatalf("expected keep-host, got %q", logs[0].Hostname)
+	}
+}
+
 func newCEFEntry(msgID string, extensions map[string]string) models.LogEntry {
 	encodedExtensions, _ := json.Marshal(extensions)
 
