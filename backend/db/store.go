@@ -60,7 +60,7 @@ func init() {
 	setupDatabase()
 
 	// Initialize schema
-	setupDatabaseTable("logs")
+	setupDatabaseTable()
 
 	batchLogs = make([]models.LogEntry, 0, maxBatchStoreLogsSize)
 
@@ -94,7 +94,7 @@ func setupDatabase() {
 }
 
 // setupDatabaseTable creates a table if it doesn't already exist
-func setupDatabaseTable(table string) {
+func setupDatabaseTable() {
 	ctx := context.Background()
 	query := fmt.Sprintf(`
 		CREATE TABLE IF NOT EXISTS %s (
@@ -119,14 +119,14 @@ func setupDatabaseTable(table string) {
 	    cef_severity TEXT,
 	    cef_extensions TEXT
 		);
-		`, table)
+		`, logsTableName)
 
 	if _, err := db.ExecContext(ctx, query); err != nil {
-		log.Fatalf("Failed to create table %s: %v", table, err)
+		log.Fatalf("Failed to create table %s: %v", logsTableName, err)
 	}
 
-	if err := ensureLogsTableSchema(table); err != nil {
-		log.Fatalf("Failed to migrate table %s: %v", table, err)
+	if err := ensureLogsTableSchema(logsTableName); err != nil {
+		log.Fatalf("Failed to migrate table %s: %v", logsTableName, err)
 	}
 }
 
@@ -172,6 +172,10 @@ func ensureLogsTableSchema(table string) error {
 
 	if err := backfillMessageFields(table); err != nil {
 		return fmt.Errorf("backfill message_fields column: %w", err)
+	}
+
+	if _, err := db.ExecContext(ctx, fmt.Sprintf("UPDATE %s SET message_fields = '' WHERE message_fields IS NULL", table)); err != nil {
+		return fmt.Errorf("normalize message_fields column: %w", err)
 	}
 
 	_, _ = db.ExecContext(ctx, fmt.Sprintf("ALTER TABLE %s ALTER COLUMN format SET DEFAULT 'syslog'", table))
@@ -401,7 +405,12 @@ func GetLogs(limit int, cursor time.Time, direction string, filters map[string]a
 	filterQueryBuilder := strings.Builder{}
 	args := []any{}
 
-	queryBuilder.WriteString("SELECT rowid, facility, severity, version, timestamp, hostname, app_name, procid, msgid, structured_data, msg, message_fields, format, cef_version, cef_device_vendor, cef_device_product, cef_device_version, cef_signature_id, cef_name, cef_severity, cef_extensions FROM logs ")
+	queryBuilder.WriteString(`SELECT rowid, facility, severity, version, timestamp, hostname, app_name,
+		COALESCE(procid, ''), COALESCE(msgid, ''), COALESCE(structured_data, '-'), COALESCE(msg, ''),
+		COALESCE(message_fields, ''), COALESCE(format, 'syslog'), COALESCE(cef_version, ''),
+		COALESCE(cef_device_vendor, ''), COALESCE(cef_device_product, ''), COALESCE(cef_device_version, ''),
+		COALESCE(cef_signature_id, ''), COALESCE(cef_name, ''), COALESCE(cef_severity, ''),
+		COALESCE(cef_extensions, '') FROM logs `)
 	countQueryBuilder.WriteString("SELECT COUNT(*) FROM logs ")
 
 	whereClause := buildWhereClause(filters, cursor, direction, &args)

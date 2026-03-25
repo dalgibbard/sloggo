@@ -188,7 +188,91 @@ func TestEnsureLogsTableSchemaMigratesOldTable(t *testing.T) {
 		t.Fatal("expected migrated message fields to be backfilled")
 	}
 
-	setupDatabaseTable(logsTableName)
+	setupDatabaseTable()
+}
+
+func TestEnsureLogsTableSchemaNormalizesPlainMessageFields(t *testing.T) {
+	resetBatchLogs()
+
+	db := GetDBInstance()
+	if _, err := db.ExecContext(context.Background(), "DROP TABLE IF EXISTS logs"); err != nil {
+		t.Fatalf("drop table: %v", err)
+	}
+	if _, err := db.ExecContext(context.Background(), `
+			CREATE TABLE logs (
+				severity INTEGER NOT NULL,
+				facility INTEGER NOT NULL,
+				version INTEGER NOT NULL DEFAULT 1,
+				timestamp TIMESTAMP NOT NULL,
+				hostname TEXT NOT NULL,
+				app_name TEXT NOT NULL,
+				procid TEXT,
+				msgid TEXT,
+				structured_data TEXT,
+				msg TEXT
+			);
+	`); err != nil {
+		t.Fatalf("create legacy table: %v", err)
+	}
+	if _, err := db.ExecContext(context.Background(), `
+			INSERT INTO logs (severity, facility, version, timestamp, hostname, app_name, procid, msgid, structured_data, msg)
+			VALUES (5, 1, 1, ?, 'plain-host', 'legacy-app', '123', 'legacy-id', '-', 'plain syslog payload')
+		`, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+		t.Fatalf("insert legacy row: %v", err)
+	}
+
+	if err := ensureLogsTableSchema(logsTableName); err != nil {
+		t.Fatalf("ensure schema: %v", err)
+	}
+
+	var messageFields string
+	if err := db.QueryRowContext(context.Background(), `SELECT message_fields FROM logs WHERE hostname = 'plain-host'`).Scan(&messageFields); err != nil {
+		t.Fatalf("query migrated row: %v", err)
+	}
+	if messageFields != "" {
+		t.Fatalf("expected plain message fields to normalize to empty string, got %q", messageFields)
+	}
+
+	setupDatabaseTable()
+}
+
+func TestGetLogsHandlesNullMessageFields(t *testing.T) {
+	resetBatchLogs()
+
+	db := GetDBInstance()
+	if _, err := db.ExecContext(context.Background(), "DROP TABLE IF EXISTS logs"); err != nil {
+		t.Fatalf("drop table: %v", err)
+	}
+	setupDatabaseTable()
+
+	if _, err := db.ExecContext(context.Background(), `
+			INSERT INTO logs (
+				severity, facility, version, timestamp, hostname, app_name,
+				procid, msgid, structured_data, msg, message_fields,
+				cef_version, cef_device_vendor, cef_device_product, cef_device_version,
+				cef_signature_id, cef_name, cef_severity, cef_extensions
+			)
+			VALUES (?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL, NULL)
+		`,
+		6, 16, 1, time.Now().UTC().Format(time.RFC3339Nano), "legacy-host", "legacy-app", "plain syslog payload",
+	); err != nil {
+		t.Fatalf("insert row with null message fields: %v", err)
+	}
+
+	logs, totalCount, filterCount, err := GetLogs(10, time.Time{}, "next", nil, "timestamp", "DESC")
+	if err != nil {
+		t.Fatalf("get logs: %v", err)
+	}
+
+	if totalCount != 1 || filterCount != 1 || len(logs) != 1 {
+		t.Fatalf("expected one log, got total=%d filtered=%d len=%d", totalCount, filterCount, len(logs))
+	}
+	if logs[0].MessageFields != "" {
+		t.Fatalf("expected empty message fields, got %q", logs[0].MessageFields)
+	}
+	if logs[0].Format != "syslog" {
+		t.Fatalf("expected default syslog format, got %q", logs[0].Format)
+	}
 }
 
 func TestGetLogsWithCEFFilters(t *testing.T) {
@@ -548,7 +632,7 @@ func resetLogsTable(t *testing.T) {
 	if _, err := GetDBInstance().ExecContext(context.Background(), "DROP TABLE IF EXISTS logs"); err != nil {
 		t.Fatalf("drop table: %v", err)
 	}
-	setupDatabaseTable(logsTableName)
+	setupDatabaseTable()
 	if _, err := GetDBInstance().ExecContext(context.Background(), "DELETE FROM logs"); err != nil {
 		t.Fatalf("delete logs: %v", err)
 	}
