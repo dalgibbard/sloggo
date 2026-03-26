@@ -1,4 +1,4 @@
-import { infiniteQueryOptions, keepPreviousData } from "@tanstack/react-query";
+import { infiniteQueryOptions } from "@tanstack/react-query";
 import type {
   BaseChartSchema,
   ColumnSchema,
@@ -76,7 +76,7 @@ export const dataOptions = (search: SearchParamsType) => {
 
       return json as InfiniteQueryResponse<ColumnSchema[], LogsMeta>;
     },
-    initialPageParam: { cursor: Date.now(), direction: "next" },
+    initialPageParam: { cursor: getInitialCursor(), direction: "next" },
     getPreviousPageParam: (firstPage, _pages) => {
       // For previous page, use the previous cursor or null if it doesn't exist
       if (!firstPage.prevCursor) return null;
@@ -88,7 +88,6 @@ export const dataOptions = (search: SearchParamsType) => {
       return { cursor: lastPage.nextCursor, direction: "next" };
     },
     refetchOnWindowFocus: true, // Enable refetching on window focus to ensure latest data
-    placeholderData: keepPreviousData,
     staleTime: 30000, // 30 seconds before data is considered stale
   });
 };

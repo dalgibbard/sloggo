@@ -901,6 +901,14 @@ func buildWhereClause(filters map[string]any, cursor time.Time, direction string
 				continue
 			}
 			conditions = append(conditions, condition)
+		case "message":
+			condition, ok := buildStringCondition("msg", value, args, stringConditionOptions{
+				PartialByDefault: true,
+			})
+			if !ok {
+				continue
+			}
+			conditions = append(conditions, condition)
 		case "format":
 			condition, ok := buildStringCondition("format", value, args)
 			if !ok {
@@ -955,8 +963,11 @@ func buildWhereClause(filters map[string]any, cursor time.Time, direction string
 				continue
 			}
 			for key, extValue := range extensionFilters {
-				conditions = append(conditions, "json_extract_string(COALESCE(NULLIF(cef_extensions, ''), '{}'), ?) = ?")
-				*args = append(*args, buildCEFJSONPath(key), extValue)
+				condition, ok := buildJSONMapCondition("cef_extensions", key, extValue, args)
+				if !ok {
+					continue
+				}
+				conditions = append(conditions, condition)
 			}
 		case "msgField":
 			messageFieldFilters, ok := getStringMapFilter(value)
@@ -964,8 +975,11 @@ func buildWhereClause(filters map[string]any, cursor time.Time, direction string
 				continue
 			}
 			for key, fieldValue := range messageFieldFilters {
-				conditions = append(conditions, "json_extract_string(COALESCE(NULLIF(message_fields, ''), '{}'), ?) = ?")
-				*args = append(*args, buildCEFJSONPath(key), fieldValue)
+				condition, ok := buildJSONMapCondition("message_fields", key, fieldValue, args)
+				if !ok {
+					continue
+				}
+				conditions = append(conditions, condition)
 			}
 		case "startDate":
 			filterValue, ok := getTimeFilter(value)
@@ -1007,24 +1021,101 @@ func getStringFilter(value any) (string, bool) {
 	return filterValue, ok
 }
 
-func buildStringCondition(column string, value any, args *[]any) (string, bool) {
+type stringConditionOptions struct {
+	PartialByDefault bool
+}
+
+func buildStringCondition(column string, value any, args *[]any, options ...stringConditionOptions) (string, bool) {
 	filterValue, ok := getStringFilter(value)
 	if !ok || filterValue == "" {
 		return "", false
 	}
 
-	if strings.HasPrefix(filterValue, "!") {
-		excludedValue := strings.TrimPrefix(filterValue, "!")
-		if excludedValue == "" {
+	settings := stringConditionOptions{}
+	if len(options) > 0 {
+		settings = options[0]
+	}
+
+	exclude := strings.HasPrefix(filterValue, "!")
+	rawValue := strings.TrimPrefix(filterValue, "!")
+	if rawValue == "" {
+		return "", false
+	}
+
+	if settings.PartialByDefault || strings.Contains(rawValue, "*") {
+		pattern := buildLikePattern(rawValue, settings.PartialByDefault)
+		if pattern == "" {
 			return "", false
 		}
 
-		*args = append(*args, excludedValue)
+		*args = append(*args, pattern)
+		if exclude {
+			return fmt.Sprintf("NOT (LOWER(COALESCE(%s, '')) LIKE LOWER(?) ESCAPE '\\')", column), true
+		}
+		return fmt.Sprintf("LOWER(COALESCE(%s, '')) LIKE LOWER(?) ESCAPE '\\'", column), true
+	}
+
+	if exclude {
+		*args = append(*args, rawValue)
 		return fmt.Sprintf("%s IS DISTINCT FROM ?", column), true
 	}
 
-	*args = append(*args, filterValue)
+	*args = append(*args, rawValue)
 	return fmt.Sprintf("%s = ?", column), true
+}
+
+func buildLikePattern(value string, partialByDefault bool) string {
+	var patternBuilder strings.Builder
+	if partialByDefault && !strings.Contains(value, "*") {
+		patternBuilder.WriteString("%")
+	}
+
+	for _, char := range value {
+		switch char {
+		case '*':
+			patternBuilder.WriteString("%")
+		case '%', '_', '\\':
+			patternBuilder.WriteString(`\`)
+			patternBuilder.WriteRune(char)
+		default:
+			patternBuilder.WriteRune(char)
+		}
+	}
+
+	if partialByDefault && !strings.Contains(value, "*") {
+		patternBuilder.WriteString("%")
+	}
+
+	return patternBuilder.String()
+}
+
+func buildJSONMapCondition(column string, key string, value string, args *[]any) (string, bool) {
+	if key == "" || value == "" {
+		return "", false
+	}
+
+	exclude := strings.HasPrefix(value, "!")
+	rawValue := strings.TrimPrefix(value, "!")
+	if rawValue == "" {
+		return "", false
+	}
+
+	expression := fmt.Sprintf("COALESCE(json_extract_string(COALESCE(NULLIF(%s, ''), '{}'), ?), '')", column)
+	*args = append(*args, buildCEFJSONPath(key))
+
+	if strings.Contains(rawValue, "*") {
+		*args = append(*args, buildLikePattern(rawValue, false))
+		if exclude {
+			return fmt.Sprintf("NOT (LOWER(%s) LIKE LOWER(?) ESCAPE '\\')", expression), true
+		}
+		return fmt.Sprintf("LOWER(%s) LIKE LOWER(?) ESCAPE '\\'", expression), true
+	}
+
+	*args = append(*args, rawValue)
+	if exclude {
+		return fmt.Sprintf("%s IS DISTINCT FROM ?", expression), true
+	}
+	return fmt.Sprintf("%s = ?", expression), true
 }
 
 func getIntSliceFilter(value any) ([]int, bool) {

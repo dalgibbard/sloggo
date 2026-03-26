@@ -114,6 +114,12 @@ export const filterFields = [
     type: "input",
   },
   {
+    label: "Message",
+    value: "message",
+    type: "input",
+    placeholder: "not found",
+  },
+  {
     label: "Format",
     value: "format",
     type: "input",
@@ -346,7 +352,14 @@ export const sheetFields = [
       props.format === "cef" &&
       props.cefExtensions !== undefined &&
       Object.keys(props.cefExtensions).length > 0,
-    component: (props) => <KVTable data={props.cefExtensions || {}} />,
+    component: (props) => (
+      <KVTable
+        data={props.cefExtensions || {}}
+        fieldValue="cefExt"
+        table={props.table}
+        filterFields={props.filterFields}
+      />
+    ),
     className: "flex-col items-start w-full gap-1",
   },
   {
@@ -356,13 +369,20 @@ export const sheetFields = [
     condition: (props) =>
       props.messageFields !== undefined &&
       Object.keys(props.messageFields).length > 0,
-    component: (props) => <KVTable data={props.messageFields || {}} />,
+    component: (props) => (
+      <KVTable
+        data={props.messageFields || {}}
+        fieldValue="msgField"
+        table={props.table}
+        filterFields={props.filterFields}
+      />
+    ),
     className: "flex-col items-start w-full gap-1",
   },
   {
     id: "message",
     label: "Message",
-    type: "readonly",
+    type: "input",
     component: (props) => (
       <CopyToClipboardContainer>{props.message}</CopyToClipboardContainer>
     ),

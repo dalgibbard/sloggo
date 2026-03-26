@@ -63,6 +63,7 @@ export const searchParamsParser = {
   appName: parseAsString,
   procId: parseAsString,
   msgId: parseAsString,
+  message: parseAsString,
   format: parseAsString,
   cefVersion: parseAsString,
   cefDeviceVendor: parseAsString,

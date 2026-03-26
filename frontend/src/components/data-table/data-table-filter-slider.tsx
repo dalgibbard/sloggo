@@ -40,7 +40,7 @@ export function DataTableFilterSlider<TData>({
     if (debouncedInput?.length === 2) {
       column?.setFilterValue(debouncedInput);
     }
-  }, [debouncedInput]);
+  }, [debouncedInput, column]);
 
   useEffect(() => {
     if (debouncedInput?.length !== 2) {
@@ -52,7 +52,7 @@ export function DataTableFilterSlider<TData>({
     ) {
       setInput(filters);
     }
-  }, [filters]);
+  }, [filters, debouncedInput]);
 
   return (
     <div className="grid gap-2">

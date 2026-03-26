@@ -25,7 +25,8 @@ import { Check, GripVertical, Settings2 } from "lucide-react";
 import { useMemo, useState } from "react";
 
 export function DataTableViewOptions() {
-  const { table, enableColumnOrdering } = useDataTable();
+  const { table, enableColumnOrdering, wrapCells, setWrapCells } =
+    useDataTable();
   const [open, setOpen] = useState(false);
   const [drag, setDrag] = useState(false);
   const [search, setSearch] = useState("");
@@ -95,6 +96,24 @@ export function DataTableViewOptions() {
           />
           <CommandList>
             <CommandEmpty>No option found.</CommandEmpty>
+            <CommandGroup heading="Display">
+              <CommandItem
+                value="wrap-cells"
+                onSelect={() => setWrapCells((current) => !current)}
+              >
+                <div
+                  className={cn(
+                    "mr-2 flex h-4 w-4 items-center justify-center rounded-sm border border-primary",
+                    wrapCells
+                      ? "bg-primary text-primary-foreground"
+                      : "opacity-50 [&_svg]:invisible",
+                  )}
+                >
+                  <Check className="h-4 w-4" />
+                </div>
+                <span>Wrap Cells</span>
+              </CommandItem>
+            </CommandGroup>
             <CommandGroup>
               <Sortable
                 value={configurableColumns.map((column) => ({ id: column.id }))}

@@ -24,6 +24,7 @@ export function DataTableFilterInput<TData>({
   const filterValue = columnFilters.find((i) => i.id === value)?.value;
   const filters = serializeInput?.(filterValue) ?? getFilter(filterValue) ?? "";
   const [input, setInput] = useState<string | null>(filters);
+  const [isFocused, setIsFocused] = useState(false);
 
   const debouncedInput = useDebounce(input, 500);
 
@@ -34,14 +35,22 @@ export function DataTableFilterInput<TData>({
         ? null
         : debouncedInput;
     if (debouncedInput === null) return;
+    if (
+      parseInput &&
+      (debouncedInput || "").trim() !== "" &&
+      (newValue === null || typeof newValue === "undefined")
+    ) {
+      return;
+    }
     column?.setFilterValue(newValue ?? undefined);
   }, [column, debouncedInput, parseInput]);
 
   useEffect(() => {
+    if (isFocused) return;
     if ((debouncedInput ?? "") !== filters) {
       setInput(filters);
     }
-  }, [debouncedInput, filters]);
+  }, [debouncedInput, filters, isFocused]);
 
   return (
     <div className="grid w-full gap-1.5">
@@ -56,6 +65,8 @@ export function DataTableFilterInput<TData>({
         id={value}
         value={input || ""}
         onChange={(e) => setInput(e.target.value)}
+        onFocus={() => setIsFocused(true)}
+        onBlur={() => setIsFocused(false)}
       />
     </div>
   );

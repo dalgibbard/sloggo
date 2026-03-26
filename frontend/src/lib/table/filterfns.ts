@@ -34,14 +34,15 @@ export const matchStringFilter: FilterFn<any> = (
   }
 
   const rowValue = row.getValue<string | null | undefined>(columnId);
+  const normalizedRowValue = rowValue ?? "";
 
   if (filterValue.startsWith("!")) {
-    const excludedValue = filterValue.slice(1);
+    const excludedValue = filterValue.slice(1).trim();
     if (!excludedValue) return true;
-    return rowValue !== excludedValue;
+    return !matchesStringValue(normalizedRowValue, excludedValue, columnId);
   }
 
-  return rowValue === filterValue;
+  return matchesStringValue(normalizedRowValue, filterValue, columnId);
 };
 
 matchStringFilter.autoRemove = (val: any) =>
@@ -61,10 +62,21 @@ export const matchCEFExtensions: FilterFn<any> = (
   }
 
   const rowValue = row.getValue<Record<string, string> | undefined>(columnId);
-  if (!rowValue) return false;
+  if (!rowValue) {
+    return Object.entries(filterValue).every(([, value]) => {
+      return typeof value === "string" && value.startsWith("!");
+    });
+  }
 
   return Object.entries(filterValue).every(([key, value]) => {
-    return rowValue[key] === value;
+    if (typeof value !== "string") return false;
+
+    const rowEntry = rowValue[key] ?? "";
+    if (value.startsWith("!")) {
+      return !matchesMapValue(rowEntry, value.slice(1));
+    }
+
+    return matchesMapValue(rowEntry, value);
   });
 };
 
@@ -73,3 +85,33 @@ matchCEFExtensions.autoRemove = (val: any) =>
   typeof val !== "object" ||
   Array.isArray(val) ||
   Object.keys(val).length === 0;
+
+function matchesStringValue(
+  rowValue: string,
+  filterValue: string,
+  columnId: string,
+) {
+  if (filterValue.includes("*")) {
+    return wildcardToRegExp(filterValue).test(rowValue);
+  }
+
+  if (columnId === "message") {
+    return rowValue.toLowerCase().includes(filterValue.toLowerCase());
+  }
+
+  return rowValue === filterValue;
+}
+
+function wildcardToRegExp(value: string) {
+  const escaped = value.replaceAll(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pattern = escaped.replaceAll("\\*", ".*");
+  return new RegExp(`^${pattern}$`, "i");
+}
+
+function matchesMapValue(rowValue: string, filterValue: string) {
+  if (filterValue.includes("*")) {
+    return wildcardToRegExp(filterValue).test(rowValue);
+  }
+
+  return rowValue === filterValue;
+}

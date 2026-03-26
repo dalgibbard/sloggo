@@ -82,11 +82,11 @@ export function DataTableFilterCommand({
     const currentFilters = table.getState().columnFilters;
     const currentEnabledFilters = currentFilters.filter((filter) => {
       const field = _filterFields?.find((field) => field.value === filter.id);
-      return !field?.commandDisabled;
+      return !field?.commandDisabled || filter.id === "msgField" || filter.id === "cefExt";
     });
     const currentDisabledFilters = currentFilters.filter((filter) => {
       const field = _filterFields?.find((field) => field.value === filter.id);
-      return field?.commandDisabled;
+      return field?.commandDisabled && filter.id !== "msgField" && filter.id !== "cefExt";
     });
 
     const commandDisabledFilterKeys = currentDisabledFilters.reduce(
@@ -109,14 +109,14 @@ export function DataTableFilterCommand({
     }
 
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [inputValue, open, currentWord]);
+  }, [inputValue, open, currentWord, columnParser]);
 
   useEffect(() => {
     // REMINDER: only update the input value if the command is closed (avoids jumps while open)
     if (!open) {
       setInputValue(columnParser.serialize(columnFilters));
     }
-  }, [columnFilters, filterFields, open]);
+  }, [columnFilters, columnParser, open]);
 
   useHotKey(() => setOpen((open) => !open), HOTKEYS.toggleCommand);
 
@@ -369,6 +369,18 @@ export function DataTableFilterCommand({
                 </span>
                 <span>
                   Exclude: <Kbd variant="outline">NOT hostname:router</Kbd>
+                </span>
+                <span>
+                  Phrase:{" "}
+                  <Kbd variant="outline">
+                    message:&quot;flow not found&quot;
+                  </Kbd>
+                </span>
+                <span>
+                  JSON:{" "}
+                  <Kbd variant="outline">
+                    message.type:&quot;dnsAdBlock&quot;
+                  </Kbd>
                 </span>
               </div>
               {lastSearches.length ? (

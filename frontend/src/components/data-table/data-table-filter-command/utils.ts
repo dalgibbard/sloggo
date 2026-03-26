@@ -22,9 +22,30 @@ export function getWordByCaretPosition({
 }) {
   let start = caretPosition;
   let end = caretPosition;
+  let inQuotes = false;
 
-  while (start > 0 && value[start - 1] !== " ") start--;
-  while (end < value.length && value[end] !== " ") end++;
+  for (let index = caretPosition - 1; index >= 0; index -= 1) {
+    const char = value[index];
+    if (char === `"` && value[index - 1] !== `\\`) {
+      inQuotes = !inQuotes;
+    }
+    if (char === " " && !inQuotes) {
+      break;
+    }
+    start = index;
+  }
+
+  inQuotes = false;
+  for (let index = caretPosition; index < value.length; index += 1) {
+    const char = value[index];
+    if (char === `"` && value[index - 1] !== `\\`) {
+      inQuotes = !inQuotes;
+    }
+    if (char === " " && !inQuotes) {
+      break;
+    }
+    end = index + 1;
+  }
 
   const word = value.substring(start, end);
   return word;
@@ -240,7 +261,8 @@ export function columnFiltersParser<TData>({
           const parser = searchParamsParser[key];
           if (!parser) return prev;
 
-          prev[key] = parser.parse(value);
+          prev[key] =
+            typeof value === "string" ? parser.parse(value) : value;
           return prev;
         },
         {} as Record<string, unknown>,
@@ -250,6 +272,11 @@ export function columnFiltersParser<TData>({
     },
     serialize: (columnFilters: ColumnFiltersState) => {
       const values = columnFilters.reduce((prev, curr) => {
+        const serializedDynamicValue = serializeDynamicCommandFilter(curr);
+        if (serializedDynamicValue) {
+          return `${prev}${serializedDynamicValue}`;
+        }
+
         const field = filterFields?.find((field) => curr.id === field.value);
         const { commandDisabled } = field || { commandDisabled: true }; // if column filter is not found, disable the command by default
         const parser = searchParamsParser[curr.id];
@@ -259,7 +286,7 @@ export function columnFiltersParser<TData>({
         if (field?.type === "input" && typeof curr.value === "string") {
           const exclude = isNegatedFilterValue(curr.value);
           const rawValue = exclude ? curr.value.slice(1) : curr.value;
-          const serializedValue = parser.serialize(rawValue);
+          const serializedValue = quoteCommandValue(parser.serialize(rawValue));
           const prefix = exclude ? NEGATION_PREFIX : "";
           return `${prev}${prefix}${curr.id}:${serializedValue} `;
         }
@@ -279,10 +306,10 @@ function parseCommandTokens<TData>({
   inputValue: string;
   filterFields: DataTableFilterField<TData>[];
 }) {
-  const values = {} as Record<string, string>;
+  const values = {} as Record<string, unknown>;
   let negateNext = false;
 
-  for (const token of inputValue.trim().split(/\s+/).filter(notEmpty)) {
+  for (const token of tokenizeCommandInput(inputValue)) {
     if (token.toUpperCase() === "NOT") {
       negateNext = true;
       continue;
@@ -292,6 +319,15 @@ function parseCommandTokens<TData>({
     negateNext = false;
 
     if (!parsedToken) continue;
+
+    if (isStringRecord(parsedToken.value)) {
+      const existingValue = values[parsedToken.name];
+      values[parsedToken.name] = {
+        ...(isStringRecord(existingValue) ? existingValue : {}),
+        ...parsedToken.value,
+      };
+      continue;
+    }
 
     values[parsedToken.name] = parsedToken.value;
   }
@@ -320,12 +356,25 @@ function parseCommandToken<TData>({
     name = name.slice(1);
   }
 
+  name = normalizeCommandFieldName(name);
+
   if (value.startsWith(NEGATION_PREFIX)) {
     exclude = true;
     value = value.slice(1);
   }
 
+  value = unquoteCommandValue(value);
+
   if (!name || !value) return null;
+
+  const dynamicFieldToken = parseDynamicCommandFieldToken({
+    name,
+    value,
+    exclude,
+  });
+  if (dynamicFieldToken) {
+    return dynamicFieldToken;
+  }
 
   const field = filterFields.find((field) => String(field.value) === name);
   if (exclude && field?.type !== "input") return null;
@@ -356,4 +405,128 @@ function applyCommandNegation(value: string, exclude: boolean) {
 
 function isNegatedFilterValue(value: string) {
   return value.startsWith(NEGATION_PREFIX);
+}
+
+function tokenizeCommandInput(inputValue: string) {
+  const tokens: string[] = [];
+  let currentToken = "";
+  let inQuotes = false;
+
+  for (let index = 0; index < inputValue.length; index += 1) {
+    const char = inputValue[index];
+
+    if (char === `"` && inputValue[index - 1] !== `\\`) {
+      inQuotes = !inQuotes;
+      currentToken += char;
+      continue;
+    }
+
+    if (char === " " && !inQuotes) {
+      if (currentToken.trim()) {
+        tokens.push(currentToken);
+      }
+      currentToken = "";
+      continue;
+    }
+
+    currentToken += char;
+  }
+
+  if (currentToken.trim()) {
+    tokens.push(currentToken);
+  }
+
+  return tokens.filter(notEmpty);
+}
+
+function quoteCommandValue(value: string) {
+  if (!/[\s"]/.test(value)) {
+    return value;
+  }
+
+  const escaped = value.replaceAll(`\\`, `\\\\`).replaceAll(`"`, `\\"`);
+  return `"${escaped}"`;
+}
+
+function unquoteCommandValue(value: string) {
+  if (value.length < 2 || !value.startsWith(`"`) || !value.endsWith(`"`)) {
+    return value;
+  }
+
+  return value
+    .slice(1, -1)
+    .replaceAll(`\\"`, `"`)
+    .replaceAll(`\\\\`, `\\`);
+}
+
+function normalizeCommandFieldName(value: string) {
+  if (value === "messages") {
+    return "message";
+  }
+
+  if (value.startsWith("messages.")) {
+    return `message.${value.slice("messages.".length)}`;
+  }
+
+  return value;
+}
+
+function parseDynamicCommandFieldToken({
+  name,
+  value,
+  exclude,
+}: {
+  name: string;
+  value: string;
+  exclude: boolean;
+}) {
+  if (name.startsWith("message.")) {
+    const key = name.slice("message.".length).trim();
+    if (!key) return null;
+
+    return {
+      name: "msgField",
+      value: { [key]: exclude ? `${NEGATION_PREFIX}${value}` : value },
+    };
+  }
+
+  if (name.startsWith("cef.")) {
+    const key = name.slice("cef.".length).trim();
+    if (!key) return null;
+
+    return {
+      name: "cefExt",
+      value: { [key]: exclude ? `${NEGATION_PREFIX}${value}` : value },
+    };
+  }
+
+  return null;
+}
+
+function serializeDynamicCommandFilter(filter: ColumnFiltersState[number]) {
+  const prefix =
+    filter.id === "msgField" ? "message" : filter.id === "cefExt" ? "cef" : "";
+  if (!prefix || !isStringRecord(filter.value)) {
+    return "";
+  }
+
+  return Object.entries(filter.value)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, value]) => {
+      const exclude = isNegatedFilterValue(value);
+      const rawValue = exclude ? value.slice(1) : value;
+      const serializedValue = quoteCommandValue(rawValue);
+      const tokenPrefix = exclude ? NEGATION_PREFIX : "";
+      return `${tokenPrefix}${prefix}.${key}:${serializedValue}`;
+    })
+    .join(" ")
+    .concat(Object.keys(filter.value).length ? " " : "");
+}
+
+function isStringRecord(value: unknown): value is Record<string, string> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+
+  return Object.values(value).every((entry) => typeof entry === "string");
 }

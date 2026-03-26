@@ -158,6 +158,10 @@ export function DataTableInfinite<TData, TValue, TMeta>({
       "data-table-visibility",
       defaultColumnVisibility,
     );
+  const [wrapCells, setWrapCells] = useLocalStorage<boolean>(
+    "data-table-wrap-cells",
+    false,
+  );
   const topBarRef = React.useRef<HTMLDivElement>(null);
   const tableRef = React.useRef<HTMLTableElement>(null);
   const [topBarHeight, setTopBarHeight] = React.useState(0);
@@ -170,11 +174,16 @@ export function DataTableInfinite<TData, TValue, TMeta>({
         Math.ceil(e.currentTarget.scrollTop + e.currentTarget.clientHeight) >=
         e.currentTarget.scrollHeight;
 
-      if (onPageBottom && !isFetching && totalRowsFetched < filterRows) {
+      if (
+        onPageBottom &&
+        hasNextPage &&
+        !isFetching &&
+        totalRowsFetched < filterRows
+      ) {
         fetchNextPage();
       }
     },
-    [fetchNextPage, isFetching, filterRows, totalRowsFetched],
+    [fetchNextPage, hasNextPage, isFetching, filterRows, totalRowsFetched],
   );
 
   React.useEffect(() => {
@@ -226,8 +235,16 @@ export function DataTableInfinite<TData, TValue, TMeta>({
       JSON.stringify({
         columnOrder,
         columnVisibility,
+        wrapCells,
       }),
-    [columnOrder, columnVisibility],
+    [columnOrder, columnVisibility, wrapCells],
+  );
+  const visibleColumnIDs = React.useMemo(
+    () => {
+      void rowLayoutSignature;
+      return table.getVisibleLeafColumns().map((column) => column.id);
+    },
+    [table, rowLayoutSignature],
   );
 
   React.useEffect(() => {
@@ -240,6 +257,25 @@ export function DataTableInfinite<TData, TValue, TMeta>({
       setColumnOrder(normalizedColumnOrder);
     }
   }, [columnOrder, defaultColumnOrder, setColumnOrder]);
+
+  React.useEffect(() => {
+    const normalizedColumnVisibility = normalizeColumnVisibility(
+      columnVisibility,
+      defaultColumnVisibility,
+      defaultColumnOrder,
+    );
+
+    if (
+      !areVisibilityStatesEqual(columnVisibility, normalizedColumnVisibility)
+    ) {
+      setColumnVisibility(normalizedColumnVisibility);
+    }
+  }, [
+    columnVisibility,
+    defaultColumnVisibility,
+    defaultColumnOrder,
+    setColumnVisibility,
+  ]);
 
   React.useEffect(() => {
     const columnFiltersWithNullable = filterFields.map((field) => {
@@ -275,6 +311,21 @@ export function DataTableInfinite<TData, TValue, TMeta>({
       .getCoreRowModel()
       .flatRows.find((row) => row.id === selectedRowKey);
   }, [rowSelection, table, isLoading, isFetching, data]);
+  const visibleRowCount = table.getRowModel().rows.length;
+  const canLoadMore = Boolean(hasNextPage) && visibleRowCount > 0;
+
+  const columnSizingInfo = table.getState().columnSizingInfo;
+  const columnSizing = table.getState().columnSizing;
+  const tableColumnVisibility = table.getState().columnVisibility;
+  const columnSizingSignature = React.useMemo(
+    () =>
+      JSON.stringify({
+        columnSizing,
+        columnSizingInfo,
+        columnVisibility: tableColumnVisibility,
+      }),
+    [columnSizing, columnSizingInfo, tableColumnVisibility],
+  );
 
   // TODO: can only share uuid within the first batch
   React.useEffect(() => {
@@ -296,22 +347,20 @@ export function DataTableInfinite<TData, TValue, TMeta>({
    * and pass the column sizes down as CSS variables to the <table> element.
    */
   const columnSizeVars = React.useMemo(() => {
+    void columnSizingSignature;
     const headers = table.getFlatHeaders();
     const colSizes: { [key: string]: string } = {};
     for (let i = 0; i < headers.length; i++) {
       const header = headers[i]!;
-      // REMINDER: replace "." with "-" to avoid invalid CSS variable name (e.g. "timing.dns" -> "timing-dns")
-      colSizes[`--header-${header.id.replace(".", "-")}-size`] =
+      const headerID = toCSSVariableID(header.id);
+      const columnID = toCSSVariableID(header.column.id);
+      colSizes[`--header-${headerID}-size`] =
         `${header.getSize()}px`;
-      colSizes[`--col-${header.column.id.replace(".", "-")}-size`] =
+      colSizes[`--col-${columnID}-size`] =
         `${header.column.getSize()}px`;
     }
     return colSizes;
-  }, [
-    table.getState().columnSizingInfo,
-    table.getState().columnSizing,
-    table.getState().columnVisibility,
-  ]);
+  }, [table, columnSizingSignature]);
 
   useHotKey(() => {
     setColumnOrder(defaultColumnOrder);
@@ -328,6 +377,8 @@ export function DataTableInfinite<TData, TValue, TMeta>({
       rowSelection={rowSelection}
       columnOrder={columnOrder}
       columnVisibility={columnVisibility}
+      wrapCells={wrapCells}
+      setWrapCells={setWrapCells}
       enableColumnOrdering={true}
       isLoading={isFetching || isLoading}
       getFacetedUniqueValues={getFacetedUniqueValues}
@@ -471,10 +522,13 @@ export function DataTableInfinite<TData, TValue, TMeta>({
                     <React.Fragment key={row.id}>
                       {renderLiveRow?.({ row })}
                       <MemoizedRow
+                        key={`${row.id}:${rowLayoutSignature}`}
                         row={row}
                         table={table}
                         selected={row.getIsSelected()}
                         layoutSignature={rowLayoutSignature}
+                        visibleColumnIDs={visibleColumnIDs}
+                        wrapCells={wrapCells}
                       />
                     </React.Fragment>
                   ))
@@ -496,9 +550,9 @@ export function DataTableInfinite<TData, TValue, TMeta>({
                     colSpan={table.getVisibleLeafColumns().length}
                     className="text-center"
                   >
-                    {hasNextPage || isFetching || isLoading ? (
+                    {canLoadMore || isFetching || isLoading ? (
                       <Button
-                        disabled={isFetching || isLoading}
+                        disabled={isFetching || isLoading || !canLoadMore}
                         onClick={() => fetchNextPage()}
                         size="sm"
                         variant="outline"
@@ -573,7 +627,15 @@ function normalizeColumnOrder(
   defaultColumnOrder: string[],
 ) {
   const allowedColumnIDs = new Set(defaultColumnOrder);
-  const nextColumnOrder = columnOrder.filter((id) => allowedColumnIDs.has(id));
+  const seenColumnIDs = new Set<string>();
+  const nextColumnOrder = columnOrder.filter((id) => {
+    if (!allowedColumnIDs.has(id) || seenColumnIDs.has(id)) {
+      return false;
+    }
+
+    seenColumnIDs.add(id);
+    return true;
+  });
 
   for (const columnID of defaultColumnOrder) {
     if (!nextColumnOrder.includes(columnID)) {
@@ -582,6 +644,27 @@ function normalizeColumnOrder(
   }
 
   return nextColumnOrder;
+}
+
+function normalizeColumnVisibility(
+  columnVisibility: VisibilityState,
+  defaultColumnVisibility: VisibilityState,
+  defaultColumnOrder: string[],
+) {
+  const nextColumnVisibility: VisibilityState = {};
+
+  for (const columnID of defaultColumnOrder) {
+    if (typeof columnVisibility[columnID] === "boolean") {
+      nextColumnVisibility[columnID] = columnVisibility[columnID];
+      continue;
+    }
+
+    if (typeof defaultColumnVisibility[columnID] === "boolean") {
+      nextColumnVisibility[columnID] = defaultColumnVisibility[columnID];
+    }
+  }
+
+  return nextColumnVisibility;
 }
 
 function areStringArraysEqual(left: string[], right: string[]) {
@@ -596,6 +679,30 @@ function areStringArraysEqual(left: string[], right: string[]) {
   return true;
 }
 
+function areVisibilityStatesEqual(
+  left: VisibilityState,
+  right: VisibilityState,
+) {
+  const leftKeys = Object.keys(left).sort();
+  const rightKeys = Object.keys(right).sort();
+
+  if (!areStringArraysEqual(leftKeys, rightKeys)) {
+    return false;
+  }
+
+  for (const key of leftKeys) {
+    if (left[key] !== right[key]) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function toCSSVariableID(value: string) {
+  return value.replaceAll(".", "-").toLowerCase();
+}
+
 /**
  * REMINDER: this is the heaviest component in the table if lots of rows
  * Some other components are rendered more often necessary, but are fixed size (not like rows that can grow in height)
@@ -607,17 +714,24 @@ function Row<TData>({
   table,
   selected,
   layoutSignature,
+  visibleColumnIDs,
+  wrapCells,
 }: {
   row: Row<TData>;
   table: TTable<TData>;
   // REMINDER: row.getIsSelected(); - just for memoization
   selected?: boolean;
   layoutSignature: string;
+  visibleColumnIDs: string[];
+  wrapCells: boolean;
 }) {
   // REMINDER: rerender the row when live mode is toggled - used to opacity the row
   // via the `getRowClassName` prop - but for some reasons it wil render the row on data fetch
   useQueryState("live", searchParamsParser.live);
   void layoutSignature;
+  const cellsByColumnID = new Map(
+    row.getAllCells().map((cell) => [cell.column.id, cell]),
+  );
   return (
     <TableRow
       id={row.id}
@@ -636,17 +750,25 @@ function Row<TData>({
         table.options.meta?.getRowClassName?.(row),
       )}
     >
-      {row.getVisibleCells().map((cell) => (
-        <TableCell
-          key={cell.id}
-          className={cn(
-            "truncate border-b border-border",
-            cell.column.columnDef.meta?.cellClassName,
-          )}
-        >
-          {flexRender(cell.column.columnDef.cell, cell.getContext())}
-        </TableCell>
-      ))}
+      {visibleColumnIDs.map((columnID) => {
+        const cell = cellsByColumnID.get(columnID);
+        if (!cell) return null;
+
+        return (
+          <TableCell
+            key={cell.id}
+            className={cn(
+              "border-b border-border",
+              wrapCells
+                ? "whitespace-pre-wrap break-words align-top"
+                : "truncate",
+              cell.column.columnDef.meta?.cellClassName,
+            )}
+          >
+            {flexRender(cell.column.columnDef.cell, cell.getContext())}
+          </TableCell>
+        );
+      })}
     </TableRow>
   );
 }
@@ -656,5 +778,6 @@ const MemoizedRow = React.memo(
   (prev, next) =>
     prev.row.id === next.row.id &&
     prev.selected === next.selected &&
-    prev.layoutSignature === next.layoutSignature,
+    prev.layoutSignature === next.layoutSignature &&
+    prev.wrapCells === next.wrapCells,
 ) as typeof Row;

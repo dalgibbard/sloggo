@@ -537,6 +537,80 @@ func TestGetMessageFieldKeys(t *testing.T) {
 	}
 }
 
+func TestGetLogsWithExcludedAndWildcardMessageFieldFilters(t *testing.T) {
+	resetLogsTable(t)
+
+	entries := []models.LogEntry{
+		{
+			Severity:       6,
+			Facility:       16,
+			Version:        1,
+			Timestamp:      time.Now().UTC(),
+			Hostname:       "blocked-host",
+			AppName:        "collector",
+			ProcID:         "1",
+			MsgID:          "json-1",
+			StructuredData: "-",
+			Message:        `{"type":"dnsAdBlock","category":"ADVERTISEMENT","protocol":"udp"}`,
+			Format:         "syslog",
+		},
+		{
+			Severity:       6,
+			Facility:       16,
+			Version:        1,
+			Timestamp:      time.Now().UTC().Add(-time.Minute),
+			Hostname:       "allowed-host",
+			AppName:        "collector",
+			ProcID:         "2",
+			MsgID:          "json-2",
+			StructuredData: "-",
+			Message:        `{"type":"dnsAllow","category":"SECURITY","protocol":"tcp"}`,
+			Format:         "syslog",
+		},
+	}
+
+	for _, entry := range entries {
+		if err := StoreLog(entry); err != nil {
+			t.Fatalf("store log entry: %v", err)
+		}
+	}
+	if err := ProcessBatchStoreLogs(); err != nil {
+		t.Fatalf("process batch: %v", err)
+	}
+
+	logs, _, filterCount, err := GetLogs(10, time.Time{}, "next", map[string]any{
+		"msgField": map[string]string{
+			"type": "!dnsAdBlock",
+		},
+	}, "timestamp", "DESC")
+	if err != nil {
+		t.Fatalf("get logs with excluded message field filter: %v", err)
+	}
+
+	if filterCount != 1 || len(logs) != 1 {
+		t.Fatalf("expected one excluded message-field log, got filterCount=%d len=%d", filterCount, len(logs))
+	}
+	if logs[0].Hostname != "allowed-host" {
+		t.Fatalf("expected allowed-host, got %q", logs[0].Hostname)
+	}
+
+	logs, _, filterCount, err = GetLogs(10, time.Time{}, "next", map[string]any{
+		"msgField": map[string]string{
+			"category": "ADVERT*",
+		},
+	}, "timestamp", "DESC")
+	if err != nil {
+		t.Fatalf("get logs with wildcard message field filter: %v", err)
+	}
+
+	if filterCount != 1 || len(logs) != 1 {
+		t.Fatalf("expected one wildcard message-field log, got filterCount=%d len=%d", filterCount, len(logs))
+	}
+	if logs[0].Hostname != "blocked-host" {
+		t.Fatalf("expected blocked-host, got %q", logs[0].Hostname)
+	}
+}
+
 func TestGetLogsWithExcludedStringFilter(t *testing.T) {
 	resetLogsTable(t)
 
@@ -596,6 +670,90 @@ func TestGetLogsWithExcludedStringFilter(t *testing.T) {
 	}
 	if logs[0].Hostname != "keep-host" {
 		t.Fatalf("expected keep-host, got %q", logs[0].Hostname)
+	}
+}
+
+func TestGetLogsWithPartialAndExcludedMessageFilter(t *testing.T) {
+	resetLogsTable(t)
+
+	entries := []models.LogEntry{
+		{
+			Severity:       6,
+			Facility:       16,
+			Version:        1,
+			Timestamp:      time.Now().UTC(),
+			Hostname:       "flow-host",
+			AppName:        "collector",
+			ProcID:         "1",
+			MsgID:          "flow-1",
+			StructuredData: "-",
+			Message:        "packet flow not found for request 42",
+			Format:         "syslog",
+		},
+		{
+			Severity:       6,
+			Facility:       16,
+			Version:        1,
+			Timestamp:      time.Now().UTC().Add(-time.Minute),
+			Hostname:       "keep-host",
+			AppName:        "collector",
+			ProcID:         "2",
+			MsgID:          "keep-1",
+			StructuredData: "-",
+			Message:        "request completed successfully",
+			Format:         "syslog",
+		},
+	}
+
+	for _, entry := range entries {
+		if err := StoreLog(entry); err != nil {
+			t.Fatalf("store log entry: %v", err)
+		}
+	}
+	if err := ProcessBatchStoreLogs(); err != nil {
+		t.Fatalf("process batch: %v", err)
+	}
+
+	logs, _, filterCount, err := GetLogs(10, time.Time{}, "next", map[string]any{
+		"message": "not found",
+	}, "timestamp", "DESC")
+	if err != nil {
+		t.Fatalf("get logs with partial message filter: %v", err)
+	}
+
+	if filterCount != 1 || len(logs) != 1 {
+		t.Fatalf("expected one partial-match log, got filterCount=%d len=%d", filterCount, len(logs))
+	}
+	if logs[0].Hostname != "flow-host" {
+		t.Fatalf("expected flow-host, got %q", logs[0].Hostname)
+	}
+
+	logs, _, filterCount, err = GetLogs(10, time.Time{}, "next", map[string]any{
+		"message": "!flow not found",
+	}, "timestamp", "DESC")
+	if err != nil {
+		t.Fatalf("get logs with excluded partial message filter: %v", err)
+	}
+
+	if filterCount != 1 || len(logs) != 1 {
+		t.Fatalf("expected one excluded partial-match log, got filterCount=%d len=%d", filterCount, len(logs))
+	}
+	if logs[0].Hostname != "keep-host" {
+		t.Fatalf("expected keep-host after exclusion, got %q", logs[0].Hostname)
+	}
+
+	logs, _, filterCount, err = GetLogs(10, time.Time{}, "next", map[string]any{
+		"message": "*flow not found*",
+	}, "timestamp", "DESC")
+	if err != nil {
+		t.Fatalf("get logs with wildcard message filter: %v", err)
+	}
+
+	if filterCount != 1 || len(logs) != 1 {
+		t.Fatalf("expected one wildcard-match log, got filterCount=%d len=%d", filterCount, len(logs))
+	}
+	if logs[0].Hostname != "flow-host" {
+		t.Fatalf("expected flow-host for wildcard match, got %q", logs[0].Hostname)
 	}
 }
 

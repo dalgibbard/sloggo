@@ -65,11 +65,9 @@ export const columns: ColumnDef<ColumnSchema>[] = [
       );
     },
     enableHiding: false,
-    enableResizing: false,
     filterFn: "arrSome",
     size: 27,
     minSize: 27,
-    maxSize: 27,
     meta: {
       headerClassName:
         "w-[--header-severity-size] max-w-[--header-severity-size] min-w-[--header-severity-size]",
@@ -89,7 +87,6 @@ export const columns: ColumnDef<ColumnSchema>[] = [
       return <HoverCardTimestamp date={date} />;
     },
     filterFn: "inDateRange",
-    enableResizing: false,
     size: 200,
     minSize: 200,
     meta: {
@@ -112,7 +109,6 @@ export const columns: ColumnDef<ColumnSchema>[] = [
       );
     },
     filterFn: "arrSome",
-    enableResizing: false,
     size: 100,
     minSize: 100,
     meta: {

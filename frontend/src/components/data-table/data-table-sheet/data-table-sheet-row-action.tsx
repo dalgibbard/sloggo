@@ -26,10 +26,11 @@ import { DataTableFilterField } from "../types";
 interface DataTableSheetRowActionProps<
   TData,
   TFields extends DataTableFilterField<TData>,
-> extends React.ComponentPropsWithRef<typeof DropdownMenuTrigger> {
+> extends Omit<React.ComponentPropsWithRef<typeof DropdownMenuTrigger>, "value"> {
   fieldValue: TFields["value"];
   filterFields: TFields[];
-  value: string | number;
+  value: string | number | boolean;
+  objectFilterKey?: string;
   table: Table<TData>;
 }
 
@@ -40,6 +41,7 @@ export function DataTableSheetRowAction<
   fieldValue,
   filterFields,
   value,
+  objectFilterKey,
   children,
   className,
   table,
@@ -77,12 +79,44 @@ export function DataTableSheetRowAction<
       case "input":
         return (
           <DropdownMenuGroup>
-            <DropdownMenuItem onClick={() => column?.setFilterValue(value)}>
+            <DropdownMenuItem
+              onClick={() => {
+                if (objectFilterKey) {
+                  const currentValue = column?.getFilterValue();
+                  const nextValue =
+                    currentValue &&
+                    typeof currentValue === "object" &&
+                    !Array.isArray(currentValue)
+                      ? { ...(currentValue as Record<string, string>) }
+                      : {};
+                  nextValue[objectFilterKey] = String(value);
+                  column?.setFilterValue(nextValue);
+                  return;
+                }
+
+                column?.setFilterValue(value);
+              }}
+            >
               <Search />
               Include
             </DropdownMenuItem>
             <DropdownMenuItem
-              onClick={() => column?.setFilterValue(`!${String(value)}`)}
+              onClick={() => {
+                if (objectFilterKey) {
+                  const currentValue = column?.getFilterValue();
+                  const nextValue =
+                    currentValue &&
+                    typeof currentValue === "object" &&
+                    !Array.isArray(currentValue)
+                      ? { ...(currentValue as Record<string, string>) }
+                      : {};
+                  nextValue[objectFilterKey] = `!${String(value)}`;
+                  column?.setFilterValue(nextValue);
+                  return;
+                }
+
+                column?.setFilterValue(`!${String(value)}`);
+              }}
             >
               <X />
               Exclude
@@ -113,7 +147,7 @@ export function DataTableSheetRowAction<
           </DropdownMenuGroup>
         );
       case "timerange":
-        const date = new Date(value);
+        const date = new Date(value as string | number);
         return (
           <DropdownMenuGroup>
             <DropdownMenuItem onClick={() => column?.setFilterValue([date])}>

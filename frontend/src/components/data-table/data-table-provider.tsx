@@ -8,6 +8,7 @@ import type {
   Table,
   VisibilityState,
 } from "@tanstack/react-table";
+import type { Dispatch, SetStateAction } from "react";
 import { createContext, useContext, useMemo } from "react";
 import { ControlsProvider } from "../../providers/controls";
 
@@ -20,6 +21,8 @@ interface DataTableStateContextType {
   rowSelection: RowSelectionState;
   columnOrder: string[];
   columnVisibility: VisibilityState;
+  wrapCells: boolean;
+  setWrapCells: Dispatch<SetStateAction<boolean>>;
   pagination: PaginationState;
   enableColumnOrdering: boolean;
 }
@@ -47,6 +50,7 @@ export const DataTableContext = createContext<DataTableContextType<
   any,
   any
 > | null>(null);
+const noopSetWrapCells: Dispatch<SetStateAction<boolean>> = () => undefined;
 
 export function DataTableProvider<TData, TValue>({
   children,
@@ -55,31 +59,58 @@ export function DataTableProvider<TData, TValue>({
   DataTableBaseContextType<TData, TValue> & {
     children: React.ReactNode;
   }) {
+  const {
+    columnFilters,
+    sorting,
+    rowSelection,
+    columnOrder,
+    columnVisibility,
+    wrapCells,
+    setWrapCells,
+    pagination,
+    table,
+    filterFields,
+    columns,
+    enableColumnOrdering,
+    isLoading,
+    getFacetedUniqueValues,
+    getFacetedMinMaxValues,
+  } = props;
+
   const value = useMemo(
     () => ({
-      ...props,
-      columnFilters: props.columnFilters ?? [],
-      sorting: props.sorting ?? [],
-      rowSelection: props.rowSelection ?? {},
-      columnOrder: props.columnOrder ?? [],
-      columnVisibility: props.columnVisibility ?? {},
-      pagination: props.pagination ?? { pageIndex: 0, pageSize: 10 },
-      enableColumnOrdering: props.enableColumnOrdering ?? false,
+      table,
+      filterFields,
+      columns,
+      isLoading,
+      getFacetedUniqueValues,
+      getFacetedMinMaxValues,
+      columnFilters: columnFilters ?? [],
+      sorting: sorting ?? [],
+      rowSelection: rowSelection ?? {},
+      columnOrder: columnOrder ?? [],
+      columnVisibility: columnVisibility ?? {},
+      wrapCells: wrapCells ?? false,
+      setWrapCells: setWrapCells ?? noopSetWrapCells,
+      pagination: pagination ?? { pageIndex: 0, pageSize: 10 },
+      enableColumnOrdering: enableColumnOrdering ?? false,
     }),
     [
-      props.columnFilters,
-      props.sorting,
-      props.rowSelection,
-      props.columnOrder,
-      props.columnVisibility,
-      props.pagination,
-      props.table,
-      props.filterFields,
-      props.columns,
-      props.enableColumnOrdering,
-      props.isLoading,
-      props.getFacetedUniqueValues,
-      props.getFacetedMinMaxValues,
+      columnFilters,
+      sorting,
+      rowSelection,
+      columnOrder,
+      columnVisibility,
+      wrapCells,
+      setWrapCells,
+      pagination,
+      table,
+      filterFields,
+      columns,
+      enableColumnOrdering,
+      isLoading,
+      getFacetedUniqueValues,
+      getFacetedMinMaxValues,
     ],
   );
 

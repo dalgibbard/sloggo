@@ -93,6 +93,11 @@ func LogsHandler(w http.ResponseWriter, r *http.Request) {
 		filters["msgId"] = msgID
 	}
 
+	// Message filter
+	if message := query.Get("message"); message != "" {
+		filters["message"] = message
+	}
+
 	// Format filter
 	if format := query.Get("format"); format != "" {
 		filters["format"] = format
