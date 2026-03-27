@@ -46,7 +46,8 @@ export function DataTableSheetRowAction<
   className,
   table,
   onKeyDown,
-  ...props
+  asChild = false,
+  disabled,
 }: DataTableSheetRowActionProps<TData, TFields>) {
   const { copy, isCopied } = useCopyToClipboard();
   const field = filterFields.find((field) => field.value === fieldValue);
@@ -94,7 +95,9 @@ export function DataTableSheetRowAction<
                   return;
                 }
 
-                column?.setFilterValue(value);
+                column?.setFilterValue((currentValue: unknown) =>
+                  appendStringFilterValue(currentValue, String(value)),
+                );
               }}
             >
               <Search />
@@ -115,7 +118,9 @@ export function DataTableSheetRowAction<
                   return;
                 }
 
-                column?.setFilterValue(`!${String(value)}`);
+                column?.setFilterValue((currentValue: unknown) =>
+                  appendStringFilterValue(currentValue, `!${String(value)}`),
+                );
               }}
             >
               <X />
@@ -184,28 +189,44 @@ export function DataTableSheetRowAction<
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
-        className={cn(
-          "rounded-md ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
-          "relative",
-          className,
-        )}
-        onKeyDown={(e) => {
-          if (e.key === "ArrowDown") {
-            // REMINDER: default behavior is to open the dropdown menu
-            // But because we use it to navigate between rows, we need to prevent it
-            // and only use "Enter" to select the option
-            e.preventDefault();
-          }
-          onKeyDown?.(e);
-        }}
-        {...props}
+        asChild
       >
-        {children}
-        {isCopied ? (
-          <div className="absolute inset-0 place-content-center bg-background/70">
-            Value copied
+        {asChild ? (
+          children
+        ) : (
+          <div
+            role="button"
+            tabIndex={disabled ? -1 : 0}
+            aria-disabled={disabled}
+            data-disabled={disabled ? "" : undefined}
+            className={cn(
+              "rounded-md ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+              disabled && "pointer-events-none opacity-50",
+              "relative",
+              className,
+            )}
+            onKeyDown={(e) => {
+              if (e.key === "ArrowDown") {
+                // REMINDER: default behavior is to open the dropdown menu
+                // But because we use it to navigate between rows, we need to prevent it
+                // and only use "Enter" to select the option
+                e.preventDefault();
+              }
+              (
+                onKeyDown as
+                  | React.KeyboardEventHandler<HTMLDivElement>
+                  | undefined
+              )?.(e);
+            }}
+          >
+            {children}
+            {isCopied ? (
+              <div className="absolute inset-0 place-content-center bg-background/70">
+                Value copied
+              </div>
+            ) : null}
           </div>
-        ) : null}
+        )}
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" side="left">
         {renderOptions()}
@@ -219,4 +240,22 @@ export function DataTableSheetRowAction<
       </DropdownMenuContent>
     </DropdownMenu>
   );
+}
+
+function appendStringFilterValue(
+  currentValue: unknown,
+  nextValue: string,
+): string | string[] {
+  const currentValues = Array.isArray(currentValue)
+    ? currentValue.filter((value): value is string => typeof value === "string")
+    : typeof currentValue === "string"
+      ? [currentValue]
+      : [];
+
+  if (currentValues.includes(nextValue)) {
+    return currentValues.length === 1 ? currentValues[0] : currentValues;
+  }
+
+  const combinedValues = [...currentValues, nextValue];
+  return combinedValues.length === 1 ? combinedValues[0] : combinedValues;
 }

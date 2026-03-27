@@ -9,6 +9,17 @@ import type { ColumnDef } from "@tanstack/react-table";
 import { HoverCardTimestamp } from "./_components/hover-card-timestamp";
 import type { ColumnSchema } from "./schema";
 
+export const CEF_COLUMN_IDS = [
+  "cefName",
+  "cefSeverity",
+  "cefVersion",
+  "cefDeviceVendor",
+  "cefDeviceProduct",
+  "cefDeviceVersion",
+  "cefSignatureId",
+  "cefExt",
+] as const;
+
 // Facility names for display
 const FACILITY_NAMES = [
   "Kernel",
@@ -88,7 +99,7 @@ export const columns: ColumnDef<ColumnSchema>[] = [
     },
     filterFn: "inDateRange",
     size: 200,
-    minSize: 200,
+    minSize: 120,
     meta: {
       headerClassName:
         "w-[--header-timestamp-size] max-w-[--header-timestamp-size] min-w-[--header-timestamp-size]",
@@ -110,7 +121,7 @@ export const columns: ColumnDef<ColumnSchema>[] = [
     },
     filterFn: "arrSome",
     size: 100,
-    minSize: 100,
+    minSize: 70,
     meta: {
       headerClassName:
         "w-[--header-facility-size] max-w-[--header-facility-size] min-w-[--header-facility-size]",
@@ -127,7 +138,7 @@ export const columns: ColumnDef<ColumnSchema>[] = [
       return <span className="font-mono capitalize">{value}</span>;
     },
     size: 75,
-    minSize: 75,
+    minSize: 60,
     meta: {
       cellClassName:
         "font-mono w-[--col-format-size] max-w-[--col-format-size]",
@@ -143,7 +154,7 @@ export const columns: ColumnDef<ColumnSchema>[] = [
       return <TextWithTooltip text={value} />;
     },
     size: 125,
-    minSize: 125,
+    minSize: 80,
     meta: {
       cellClassName:
         "font-mono w-[--col-hostname-size] max-w-[--col-hostname-size]",
@@ -160,7 +171,7 @@ export const columns: ColumnDef<ColumnSchema>[] = [
       return <TextWithTooltip text={value} />;
     },
     size: 100,
-    minSize: 100,
+    minSize: 80,
     meta: {
       cellClassName:
         "font-mono w-[--col-appname-size] max-w-[--col-appname-size]",
@@ -177,7 +188,7 @@ export const columns: ColumnDef<ColumnSchema>[] = [
       return <span className="font-mono">{value}</span>;
     },
     size: 80,
-    minSize: 80,
+    minSize: 60,
     meta: {
       cellClassName:
         "font-mono w-[--col-procid-size] max-w-[--col-procid-size]",
@@ -193,7 +204,7 @@ export const columns: ColumnDef<ColumnSchema>[] = [
       return <span className="font-mono">{value}</span>;
     },
     size: 80,
-    minSize: 80,
+    minSize: 60,
     meta: {
       cellClassName: "font-mono w-[--col-msgid-size] max-w-[--col-msgid-size]",
       headerClassName: "min-w-[--header-msgid-size] w-[--header-msgid-size]",
@@ -208,7 +219,7 @@ export const columns: ColumnDef<ColumnSchema>[] = [
       return renderValue(value);
     },
     size: 180,
-    minSize: 140,
+    minSize: 100,
     meta: {
       cellClassName:
         "font-mono w-[--col-cefname-size] max-w-[--col-cefname-size]",
@@ -229,7 +240,7 @@ export const columns: ColumnDef<ColumnSchema>[] = [
       );
     },
     size: 90,
-    minSize: 90,
+    minSize: 70,
     meta: {
       cellClassName:
         "font-mono w-[--col-cefseverity-size] max-w-[--col-cefseverity-size]",
@@ -240,12 +251,13 @@ export const columns: ColumnDef<ColumnSchema>[] = [
   {
     accessorKey: "message",
     header: "Message",
+    filterFn: matchStringFilter,
     cell: ({ row }) => {
       const value = row.getValue<ColumnSchema["message"]>("message");
       return <TextWithTooltip text={value} />;
     },
     size: 300,
-    minSize: 200,
+    minSize: 120,
     meta: {
       cellClassName:
         "font-mono w-[--col-message-size] max-w-[--col-message-size]",
@@ -276,7 +288,7 @@ export const columns: ColumnDef<ColumnSchema>[] = [
       );
     },
     size: 150,
-    minSize: 150,
+    minSize: 100,
     meta: {
       cellClassName:
         "font-mono w-[--col-structureddata-size] max-w-[--col-structureddata-size]",

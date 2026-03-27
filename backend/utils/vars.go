@@ -20,6 +20,7 @@ var APIPort string
 var LogRetentionMinutes int64
 
 var Debug bool
+var CEFEnabled bool
 
 var Version string // Set via -X flag during build
 
@@ -54,6 +55,7 @@ func init() {
 	APIPort = GetSanitizedEnvString("SLOGGO_API_PORT", "8080")
 	LogRetentionMinutes = GetSanitizedEnvInt64("SLOGGO_LOG_RETENTION_MINUTES", 30*24*60) // Default to 30 days
 	Debug = GetSanitizedEnvString("SLOGGO_DEBUG", "false") == "true"
+	CEFEnabled = GetSanitizedEnvString("SLOGGO_ENABLE_CEF", "false") == "true"
 
 	// Configure log format selection
 	switch GetSanitizedEnvString("SLOGGO_LOG_FORMAT", "auto") {

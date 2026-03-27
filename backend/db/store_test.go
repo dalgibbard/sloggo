@@ -162,7 +162,7 @@ func TestEnsureLogsTableSchemaMigratesOldTable(t *testing.T) {
 		t.Fatalf("insert legacy row: %v", err)
 	}
 
-	if err := ensureLogsTableSchema(logsTableName); err != nil {
+	if err := ensureLogsTableSchema(); err != nil {
 		t.Fatalf("ensure schema: %v", err)
 	}
 
@@ -221,7 +221,7 @@ func TestEnsureLogsTableSchemaNormalizesPlainMessageFields(t *testing.T) {
 		t.Fatalf("insert legacy row: %v", err)
 	}
 
-	if err := ensureLogsTableSchema(logsTableName); err != nil {
+	if err := ensureLogsTableSchema(); err != nil {
 		t.Fatalf("ensure schema: %v", err)
 	}
 
@@ -231,6 +231,99 @@ func TestEnsureLogsTableSchemaNormalizesPlainMessageFields(t *testing.T) {
 	}
 	if messageFields != "" {
 		t.Fatalf("expected plain message fields to normalize to empty string, got %q", messageFields)
+	}
+
+	setupDatabaseTable()
+}
+
+func TestStoreLogEntryHandlesLegacyColumnOrder(t *testing.T) {
+	resetBatchLogs()
+
+	db := GetDBInstance()
+	if _, err := db.ExecContext(context.Background(), "DROP TABLE IF EXISTS logs"); err != nil {
+		t.Fatalf("drop table: %v", err)
+	}
+	if _, err := db.ExecContext(context.Background(), `
+			CREATE TABLE logs (
+				severity INTEGER NOT NULL,
+				facility INTEGER NOT NULL,
+				version INTEGER NOT NULL DEFAULT 1,
+				timestamp TIMESTAMP NOT NULL,
+				hostname TEXT NOT NULL,
+				app_name TEXT NOT NULL,
+				procid TEXT,
+				msgid TEXT,
+				structured_data TEXT,
+				msg TEXT,
+				format TEXT NOT NULL DEFAULT 'syslog',
+				cef_version TEXT,
+				cef_device_vendor TEXT,
+				cef_device_product TEXT,
+				cef_device_version TEXT,
+				cef_signature_id TEXT,
+				cef_name TEXT,
+				cef_severity TEXT,
+				cef_extensions TEXT
+			);
+	`); err != nil {
+		t.Fatalf("create legacy cef table: %v", err)
+	}
+
+	if err := ensureLogsTableSchema(); err != nil {
+		t.Fatalf("ensure schema: %v", err)
+	}
+
+	entry := models.LogEntry{
+		Severity:       6,
+		Facility:       16,
+		Version:        1,
+		Timestamp:      time.Now().UTC(),
+		Hostname:       "json-host",
+		AppName:        "collector",
+		ProcID:         "1",
+		MsgID:          "json-1",
+		StructuredData: "-",
+		Message:        `{"type":"dnsAdBlock","protocol":"udp"}`,
+		Format:         "syslog",
+	}
+
+	if err := StoreLog(entry); err != nil {
+		t.Fatalf("store log entry: %v", err)
+	}
+	if err := ProcessBatchStoreLogs(); err != nil {
+		t.Fatalf("process batch: %v", err)
+	}
+
+	var format, messageFields string
+	if err := db.QueryRowContext(context.Background(), `
+			SELECT format, message_fields
+			FROM logs
+			WHERE hostname = 'json-host'
+		`).Scan(&format, &messageFields); err != nil {
+		t.Fatalf("query stored row: %v", err)
+	}
+
+	if format != "syslog" {
+		t.Fatalf("expected syslog format, got %q", format)
+	}
+	if messageFields == "" {
+		t.Fatal("expected message fields to be stored for legacy column order")
+	}
+
+	logs, _, _, err := GetLogs(10, time.Time{}, "next", map[string]any{
+		"hostname": "json-host",
+	}, "timestamp", "DESC")
+	if err != nil {
+		t.Fatalf("get logs: %v", err)
+	}
+	if len(logs) != 1 {
+		t.Fatalf("expected one log, got %d", len(logs))
+	}
+	if logs[0].Format != "syslog" {
+		t.Fatalf("expected API format syslog, got %q", logs[0].Format)
+	}
+	if logs[0].Message != entry.Message {
+		t.Fatalf("expected message to round-trip, got %q", logs[0].Message)
 	}
 
 	setupDatabaseTable()
@@ -355,6 +448,93 @@ func TestGetLogsWithCEFFilters(t *testing.T) {
 	}
 	if logs[0].Format != "cef" || logs[0].CEFName != "worm successfully stopped" {
 		t.Fatalf("unexpected filtered log: %+v", logs[0])
+	}
+}
+
+func TestGetLogsWithMultipleStringFilters(t *testing.T) {
+	resetLogsTable(t)
+
+	for _, entry := range []models.LogEntry{
+		{
+			Severity:       6,
+			Facility:       16,
+			Version:        1,
+			Timestamp:      time.Now().UTC(),
+			Hostname:       "dhcpv6-host",
+			AppName:        "odhcp6c",
+			ProcID:         "1",
+			MsgID:          "dhcpv6-1",
+			StructuredData: "-",
+			Message:        "dhcpv6 client log",
+			Format:         "syslog",
+		},
+		{
+			Severity:       6,
+			Facility:       16,
+			Version:        1,
+			Timestamp:      time.Now().UTC().Add(-time.Minute),
+			Hostname:       "dns-host",
+			AppName:        "dnsmasq",
+			ProcID:         "2",
+			MsgID:          "dns-1",
+			StructuredData: "-",
+			Message:        "dns resolver log",
+			Format:         "syslog",
+		},
+		{
+			Severity:       6,
+			Facility:       16,
+			Version:        1,
+			Timestamp:      time.Now().UTC().Add(-2 * time.Minute),
+			Hostname:       "core-host",
+			AppName:        "coredns",
+			ProcID:         "3",
+			MsgID:          "core-1",
+			StructuredData: "-",
+			Message:        "core dns log",
+			Format:         "syslog",
+		},
+	} {
+		if err := StoreLog(entry); err != nil {
+			t.Fatalf("store log entry: %v", err)
+		}
+	}
+	if err := ProcessBatchStoreLogs(); err != nil {
+		t.Fatalf("process batch: %v", err)
+	}
+
+	logs, _, _, err := GetLogs(10, time.Time{}, "next", map[string]any{
+		"appName": []string{"!odhcp6c", "!dnsmasq"},
+	}, "timestamp", "DESC")
+	if err != nil {
+		t.Fatalf("get logs with excluded app filters: %v", err)
+	}
+
+	if len(logs) != 1 {
+		t.Fatalf("expected one remaining log after exclusions, got %d", len(logs))
+	}
+	if logs[0].AppName != "coredns" {
+		t.Fatalf("expected coredns log, got %q", logs[0].AppName)
+	}
+
+	logs, _, _, err = GetLogs(10, time.Time{}, "next", map[string]any{
+		"appName": []string{"odhcp6c", "dnsmasq"},
+	}, "timestamp", "DESC")
+	if err != nil {
+		t.Fatalf("get logs with included app filters: %v", err)
+	}
+
+	if len(logs) != 2 {
+		t.Fatalf("expected two included logs, got %d", len(logs))
+	}
+	if !slices.Equal(
+		[]string{logs[0].AppName, logs[1].AppName},
+		[]string{"odhcp6c", "dnsmasq"},
+	) && !slices.Equal(
+		[]string{logs[0].AppName, logs[1].AppName},
+		[]string{"dnsmasq", "odhcp6c"},
+	) {
+		t.Fatalf("unexpected app names returned: %q, %q", logs[0].AppName, logs[1].AppName)
 	}
 }
 

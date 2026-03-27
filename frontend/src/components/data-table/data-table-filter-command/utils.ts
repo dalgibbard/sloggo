@@ -9,6 +9,7 @@ import { ParserBuilder } from "nuqs";
 import type { DataTableFilterField } from "../types";
 
 const NEGATION_PREFIX = "!";
+const COMMAND_SEPARATORS = [":", "="] as const;
 
 /**
  * Extracts the word from the given string at the specified caret position.
@@ -154,7 +155,7 @@ export function getFilterValue({
    * @example slider [filter, query] = ["p95", "0-3000"]
    * @example input [filter, query] = ["name", "api"]
    */
-  const [filter, rawQuery] = normalizedCurrentWord.split(":");
+  const [filter, rawQuery] = splitCommandToken(normalizedCurrentWord);
   const query = rawQuery?.startsWith(NEGATION_PREFIX)
     ? rawQuery.slice(1)
     : rawQuery;
@@ -284,11 +285,15 @@ export function columnFiltersParser<TData>({
         if (commandDisabled || !parser) return prev;
 
         if (field?.type === "input" && typeof curr.value === "string") {
-          const exclude = isNegatedFilterValue(curr.value);
-          const rawValue = exclude ? curr.value.slice(1) : curr.value;
-          const serializedValue = quoteCommandValue(parser.serialize(rawValue));
-          const prefix = exclude ? NEGATION_PREFIX : "";
-          return `${prev}${prefix}${curr.id}:${serializedValue} `;
+          return `${prev}${serializeInputCommandTokens(curr.id, [curr.value])}`;
+        }
+
+        if (
+          field?.type === "input" &&
+          Array.isArray(curr.value) &&
+          curr.value.every((entry) => typeof entry === "string")
+        ) {
+          return `${prev}${serializeInputCommandTokens(curr.id, curr.value)}`;
         }
 
         return `${prev}${curr.id}:${parser.serialize(curr.value)} `;
@@ -297,6 +302,31 @@ export function columnFiltersParser<TData>({
       return values;
     },
   };
+}
+
+export function isCommandInputReady<TData>({
+  inputValue,
+  filterFields,
+}: {
+  inputValue: string;
+  filterFields: DataTableFilterField<TData>[];
+}) {
+  const tokens = tokenizeCommandInput(inputValue.trim());
+  if (tokens.length === 0) return false;
+
+  let negateNext = false;
+  for (const token of tokens) {
+    if (token.toUpperCase() === "NOT") {
+      negateNext = true;
+      continue;
+    }
+
+    const parsedToken = parseCommandToken({ token, negateNext, filterFields });
+    if (!parsedToken) return false;
+    negateNext = false;
+  }
+
+  return !negateNext;
 }
 
 function parseCommandTokens<TData>({
@@ -329,7 +359,10 @@ function parseCommandTokens<TData>({
       continue;
     }
 
-    values[parsedToken.name] = parsedToken.value;
+    values[parsedToken.name] = mergeCommandFilterValue(
+      values[parsedToken.name],
+      parsedToken.value,
+    );
   }
 
   return values;
@@ -344,8 +377,10 @@ function parseCommandToken<TData>({
   negateNext: boolean;
   filterFields: DataTableFilterField<TData>[];
 }) {
-  const separatorIndex = token.indexOf(":");
-  if (separatorIndex <= 0) return null;
+  const separatorIndex = getCommandSeparatorIndex(token);
+  if (separatorIndex <= 0) {
+    return parseDefaultCommandToken({ token, negateNext });
+  }
 
   let name = token.slice(0, separatorIndex);
   let value = token.slice(separatorIndex + 1);
@@ -385,6 +420,35 @@ function parseCommandToken<TData>({
   };
 }
 
+function parseDefaultCommandToken({
+  token,
+  negateNext,
+}: {
+  token: string;
+  negateNext: boolean;
+}) {
+  let value = token.trim();
+  let exclude = negateNext;
+
+  if (value.startsWith(NEGATION_PREFIX)) {
+    exclude = true;
+    value = value.slice(1);
+  }
+
+  if (!isQuotedCommandValue(value)) {
+    return null;
+  }
+
+  value = unquoteCommandValue(value);
+
+  if (!value) return null;
+
+  return {
+    name: "message",
+    value: exclude ? `${NEGATION_PREFIX}${value}` : value,
+  };
+}
+
 function stripNegationPrefix(value: string) {
   return value.startsWith(NEGATION_PREFIX) ? value.slice(1) : value;
 }
@@ -392,7 +456,7 @@ function stripNegationPrefix(value: string) {
 function isNegatedCommandToken(value: string) {
   if (value.startsWith(NEGATION_PREFIX)) return true;
 
-  const [, queryValue = ""] = value.split(":");
+  const [, queryValue = ""] = splitCommandToken(value);
   return queryValue.startsWith(NEGATION_PREFIX);
 }
 
@@ -448,6 +512,10 @@ function quoteCommandValue(value: string) {
   return `"${escaped}"`;
 }
 
+function isQuotedCommandValue(value: string) {
+  return value.length >= 2 && value.startsWith(`"`) && value.endsWith(`"`);
+}
+
 function unquoteCommandValue(value: string) {
   if (value.length < 2 || !value.startsWith(`"`) || !value.endsWith(`"`)) {
     return value;
@@ -469,6 +537,28 @@ function normalizeCommandFieldName(value: string) {
   }
 
   return value;
+}
+
+function getCommandSeparatorIndex(value: string) {
+  const indexes = COMMAND_SEPARATORS
+    .map((separator) => value.indexOf(separator))
+    .filter((index) => index > 0);
+
+  if (!indexes.length) return -1;
+
+  return Math.min(...indexes);
+}
+
+function splitCommandToken(value: string) {
+  const separatorIndex = getCommandSeparatorIndex(value);
+  if (separatorIndex <= 0) {
+    return [value, ""] as const;
+  }
+
+  return [
+    value.slice(0, separatorIndex),
+    value.slice(separatorIndex + 1),
+  ] as const;
 }
 
 function parseDynamicCommandFieldToken({
@@ -521,6 +611,49 @@ function serializeDynamicCommandFilter(filter: ColumnFiltersState[number]) {
     })
     .join(" ")
     .concat(Object.keys(filter.value).length ? " " : "");
+}
+
+function serializeInputCommandTokens(fieldID: string, values: string[]) {
+  return values
+    .map((value) => {
+      const exclude = isNegatedFilterValue(value);
+      const rawValue = exclude ? value.slice(1) : value;
+      const serializedValue = quoteCommandValue(rawValue);
+      const prefix = exclude ? NEGATION_PREFIX : "";
+      return `${prefix}${fieldID}:${serializedValue}`;
+    })
+    .join(" ")
+    .concat(values.length ? " " : "");
+}
+
+function mergeCommandFilterValue(
+  currentValue: unknown,
+  nextValue: unknown,
+): unknown {
+  if (typeof nextValue !== "string") {
+    return nextValue;
+  }
+
+  if (typeof currentValue === "undefined") {
+    return nextValue;
+  }
+
+  const currentValues = Array.isArray(currentValue)
+    ? currentValue.filter((value): value is string => typeof value === "string")
+    : typeof currentValue === "string"
+      ? [currentValue]
+      : [];
+
+  if (currentValues.length === 0) {
+    return nextValue;
+  }
+
+  if (currentValues.includes(nextValue)) {
+    return currentValues.length === 1 ? currentValues[0] : currentValues;
+  }
+
+  const combinedValues = [...currentValues, nextValue];
+  return combinedValues.length === 1 ? combinedValues[0] : combinedValues;
 }
 
 function isStringRecord(value: unknown): value is Record<string, string> {

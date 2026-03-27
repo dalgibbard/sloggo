@@ -29,24 +29,47 @@ export const matchStringFilter: FilterFn<any> = (
   columnId,
   filterValue,
 ) => {
-  if (typeof filterValue !== "string" || filterValue.length === 0) {
+  if (
+    (typeof filterValue !== "string" && !Array.isArray(filterValue)) ||
+    (typeof filterValue === "string" && filterValue.length === 0) ||
+    (Array.isArray(filterValue) && filterValue.length === 0)
+  ) {
     return true;
   }
 
   const rowValue = row.getValue<string | null | undefined>(columnId);
   const normalizedRowValue = rowValue ?? "";
-
-  if (filterValue.startsWith("!")) {
-    const excludedValue = filterValue.slice(1).trim();
-    if (!excludedValue) return true;
-    return !matchesStringValue(normalizedRowValue, excludedValue, columnId);
+  const filterValues = normalizeStringFilterValues(filterValue);
+  if (filterValues.length === 0) {
+    return true;
   }
 
-  return matchesStringValue(normalizedRowValue, filterValue, columnId);
+  const includedValues = filterValues.filter((value) => !value.startsWith("!"));
+  const excludedValues = filterValues
+    .filter((value) => value.startsWith("!"))
+    .map((value) => value.slice(1).trim())
+    .filter((value) => value.length > 0);
+
+  if (
+    excludedValues.some((value) =>
+      matchesStringValue(normalizedRowValue, value, columnId),
+    )
+  ) {
+    return false;
+  }
+
+  if (includedValues.length === 0) {
+    return true;
+  }
+
+  return includedValues.some((value) =>
+    matchesStringValue(normalizedRowValue, value, columnId),
+  );
 };
 
 matchStringFilter.autoRemove = (val: any) =>
-  typeof val !== "string" || val.length === 0 || val === "!";
+  (typeof val !== "string" && !Array.isArray(val)) ||
+  normalizeStringFilterValues(val).length === 0;
 
 export const matchCEFExtensions: FilterFn<any> = (
   row,
@@ -114,4 +137,20 @@ function matchesMapValue(rowValue: string, filterValue: string) {
   }
 
   return rowValue === filterValue;
+}
+
+function normalizeStringFilterValues(value: unknown): string[] {
+  if (typeof value === "string") {
+    const normalizedValue = value.trim();
+    return normalizedValue && normalizedValue !== "!" ? [normalizedValue] : [];
+  }
+
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value
+    .filter((entry): entry is string => typeof entry === "string")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0 && entry !== "!");
 }

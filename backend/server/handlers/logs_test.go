@@ -7,11 +7,13 @@ import (
 	"net/url"
 	"sloggo/db"
 	"sloggo/models"
+	"sloggo/utils"
 	"testing"
 	"time"
 )
 
 func TestLogsHandlerReturnsCEFFieldsAndMetadata(t *testing.T) {
+	restoreCEFEnabled(t, true)
 	clearLogsTable(t)
 
 	cefExtensions, err := json.Marshal(map[string]string{
@@ -106,6 +108,76 @@ func TestLogsHandlerReturnsCEFFieldsAndMetadata(t *testing.T) {
 	}
 	if len(keys) != 2 {
 		t.Fatalf("expected two extension keys, got %d", len(keys))
+	}
+	if enabled, ok := response.Meta.Metadata["cefEnabled"].(bool); !ok || !enabled {
+		t.Fatalf("expected cefEnabled metadata true, got %#v", response.Meta.Metadata["cefEnabled"])
+	}
+}
+
+func TestLogsHandlerDisablesCEFMetadataAndFiltersWhenDisabled(t *testing.T) {
+	restoreCEFEnabled(t, false)
+	clearLogsTable(t)
+
+	cefExtensions, err := json.Marshal(map[string]string{"src": "198.51.100.10"})
+	if err != nil {
+		t.Fatalf("marshal cef extensions: %v", err)
+	}
+
+	entry := models.LogEntry{
+		Severity:         4,
+		Facility:         16,
+		Version:          1,
+		Timestamp:        time.Now().UTC(),
+		Hostname:         "cef-host",
+		AppName:          "collector",
+		ProcID:           "1",
+		MsgID:            "cef-1",
+		StructuredData:   "-",
+		Message:          "CEF payload",
+		Format:           "cef",
+		CEFVersion:       "0",
+		CEFDeviceVendor:  "Security",
+		CEFDeviceProduct: "threatmanager",
+		CEFDeviceVersion: "1.0",
+		CEFSignatureID:   "100",
+		CEFName:          "worm successfully stopped",
+		CEFSeverity:      "10",
+		CEFExtensions:    string(cefExtensions),
+	}
+	if err := db.StoreLog(entry); err != nil {
+		t.Fatalf("store log entry: %v", err)
+	}
+	if err := db.ProcessBatchStoreLogs(); err != nil {
+		t.Fatalf("process batch: %v", err)
+	}
+
+	cefFilter, err := json.Marshal(map[string]string{"src": "203.0.113.99"})
+	if err != nil {
+		t.Fatalf("marshal cef filter: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/logs?cefSeverity=9&cefExt="+url.QueryEscape(string(cefFilter)), nil)
+	w := httptest.NewRecorder()
+
+	LogsHandler(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", w.Code)
+	}
+
+	var response LogsResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	if len(response.Data) != 1 {
+		t.Fatalf("expected cef-specific filters to be ignored when disabled, got %d rows", len(response.Data))
+	}
+	if enabled, ok := response.Meta.Metadata["cefEnabled"].(bool); !ok || enabled {
+		t.Fatalf("expected cefEnabled metadata false, got %#v", response.Meta.Metadata["cefEnabled"])
+	}
+	if keys, ok := response.Meta.Metadata["cefExtensionKeys"].([]any); ok && len(keys) > 0 {
+		t.Fatalf("expected no cefExtensionKeys when disabled, got %#v", keys)
 	}
 }
 
@@ -400,10 +472,99 @@ func TestLogsHandlerSupportsPartialAndExcludedMessageFilters(t *testing.T) {
 	}
 }
 
+func TestLogsHandlerSupportsMultipleStringFilters(t *testing.T) {
+	clearLogsTable(t)
+
+	for _, entry := range []models.LogEntry{
+		{
+			Severity:       6,
+			Facility:       16,
+			Version:        1,
+			Timestamp:      time.Now().UTC(),
+			Hostname:       "dhcpv6-host",
+			AppName:        "odhcp6c",
+			ProcID:         "1",
+			MsgID:          "dhcpv6-1",
+			StructuredData: "-",
+			Message:        "dhcpv6 client log",
+			Format:         "syslog",
+		},
+		{
+			Severity:       6,
+			Facility:       16,
+			Version:        1,
+			Timestamp:      time.Now().UTC().Add(-time.Minute),
+			Hostname:       "dns-host",
+			AppName:        "dnsmasq",
+			ProcID:         "2",
+			MsgID:          "dns-1",
+			StructuredData: "-",
+			Message:        "dns resolver log",
+			Format:         "syslog",
+		},
+		{
+			Severity:       6,
+			Facility:       16,
+			Version:        1,
+			Timestamp:      time.Now().UTC().Add(-2 * time.Minute),
+			Hostname:       "core-host",
+			AppName:        "coredns",
+			ProcID:         "3",
+			MsgID:          "core-1",
+			StructuredData: "-",
+			Message:        "core dns log",
+			Format:         "syslog",
+		},
+	} {
+		if err := db.StoreLog(entry); err != nil {
+			t.Fatalf("store log entry: %v", err)
+		}
+	}
+	if err := db.ProcessBatchStoreLogs(); err != nil {
+		t.Fatalf("process batch: %v", err)
+	}
+
+	appNameFilter, err := json.Marshal([]string{"!odhcp6c", "!dnsmasq"})
+	if err != nil {
+		t.Fatalf("marshal app name filter: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/logs?appName="+url.QueryEscape(string(appNameFilter)), nil)
+	w := httptest.NewRecorder()
+
+	LogsHandler(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", w.Code)
+	}
+
+	var response LogsResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	if len(response.Data) != 1 {
+		t.Fatalf("expected one remaining log, got %d", len(response.Data))
+	}
+	if response.Data[0].AppName != "coredns" {
+		t.Fatalf("expected coredns log, got %q", response.Data[0].AppName)
+	}
+}
+
 func clearLogsTable(t *testing.T) {
 	t.Helper()
 
 	if _, err := db.GetDBInstance().Exec("DELETE FROM logs"); err != nil {
 		t.Fatalf("clear logs: %v", err)
 	}
+}
+
+func restoreCEFEnabled(t *testing.T, enabled bool) {
+	t.Helper()
+
+	previous := utils.CEFEnabled
+	utils.CEFEnabled = enabled
+	t.Cleanup(func() {
+		utils.CEFEnabled = previous
+	})
 }

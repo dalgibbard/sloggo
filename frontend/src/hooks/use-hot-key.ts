@@ -1,5 +1,5 @@
 import type { HotKeyDefinition } from "@/constants/hotkeys";
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 
 function isEditableTarget(target: EventTarget | null) {
   if (!(target instanceof HTMLElement)) return false;
@@ -17,6 +17,12 @@ export function useHotKey(
   callback: () => void,
   hotkey: HotKeyDefinition,
 ): void {
+  const callbackRef = useRef(callback);
+
+  useEffect(() => {
+    callbackRef.current = callback;
+  }, [callback]);
+
   useEffect(() => {
     function handler(e: KeyboardEvent) {
       if (!hotkey.allowInInput && isEditableTarget(e.target)) return;
@@ -34,12 +40,12 @@ export function useHotKey(
       if (hotkey.preventDefault ?? true) {
         e.preventDefault();
       }
-      callback();
+      callbackRef.current();
     }
 
     window.addEventListener("keydown", handler);
     return () => {
       window.removeEventListener("keydown", handler);
     };
-  }, [callback, hotkey]);
+  }, [hotkey]);
 }

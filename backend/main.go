@@ -13,7 +13,7 @@ func main() {
 	// Startup configuration log
 	log.Printf("Sloggo version: %s", utils.Version)
 	log.Printf("Config: listeners=%v udp_port=%s tcp_port=%s api_port=%s", utils.Listeners, utils.UDPPort, utils.TCPPort, utils.APIPort)
-	log.Printf("Config: log_format=%s debug=%t retention_minutes=%d", utils.GetLogFormat(), utils.Debug, utils.LogRetentionMinutes)
+	log.Printf("Config: log_format=%s debug=%t cef_enabled=%t retention_minutes=%d", utils.GetLogFormat(), utils.Debug, utils.CEFEnabled, utils.LogRetentionMinutes)
 
 	if slices.Contains(utils.Listeners, "udp") {
 		go listener.StartUDPListener()

@@ -20,106 +20,75 @@ import {
 } from "@/components/ui/tooltip";
 import { Kbd } from "@/components/custom/kbd";
 import { cn } from "@/lib/utils";
-import { useDataTable } from "@/components/data-table/data-table-provider";
 import { Skeleton } from "@/components/ui/skeleton";
 
 export interface DataTableSheetDetailsProps {
+  open: boolean;
   title?: React.ReactNode;
   titleClassName?: string;
+  isLoading?: boolean;
+  canPrev?: boolean;
+  canNext?: boolean;
+  onPrev?: () => void;
+  onNext?: () => void;
+  onClose: () => void;
   children?: React.ReactNode;
 }
 
 export function DataTableSheetDetails({
+  open,
   title,
   titleClassName,
+  isLoading,
+  canPrev,
+  canNext,
+  onPrev,
+  onNext,
+  onClose,
   children,
 }: DataTableSheetDetailsProps) {
-  const { table, rowSelection, isLoading } = useDataTable();
-
-  const selectedRowKey = Object.keys(rowSelection)?.[0];
-
-  const selectedRow = React.useMemo(() => {
-    if (isLoading && !selectedRowKey) return;
-    return table
-      .getCoreRowModel()
-      .flatRows.find((row) => row.id === selectedRowKey);
-  }, [selectedRowKey, isLoading, table]);
-
-  const index = table
-    .getCoreRowModel()
-    .flatRows.findIndex((row) => row.id === selectedRow?.id);
-
-  const nextId = React.useMemo(
-    () => table.getCoreRowModel().flatRows[index + 1]?.id,
-    [index, table],
-  );
-
-  const prevId = React.useMemo(
-    () => table.getCoreRowModel().flatRows[index - 1]?.id,
-    [index, table],
-  );
-
-  const onPrev = React.useCallback(() => {
-    if (prevId) table.setRowSelection({ [prevId]: true });
-  }, [prevId, table]);
-
-  const onNext = React.useCallback(() => {
-    if (nextId) table.setRowSelection({ [nextId]: true });
-  }, [nextId, table]);
-
   React.useEffect(() => {
-    const down = (e: KeyboardEvent) => {
-      if (!selectedRowKey) return;
+    if (!open) return;
 
+    const down = (e: KeyboardEvent) => {
       // REMINDER: prevent dropdown navigation inside of sheet to change row selection
       const activeElement = document.activeElement;
       const isMenuActive = activeElement?.closest('[role="menu"]');
 
       if (isMenuActive) return;
 
-      if (e.key === "ArrowUp") {
+      if (e.key === "ArrowUp" && canPrev) {
         e.preventDefault();
-        onPrev();
+        onPrev?.();
       }
-      if (e.key === "ArrowDown") {
+
+      if (e.key === "ArrowDown" && canNext) {
         e.preventDefault();
-        onNext();
+        onNext?.();
       }
     };
 
     document.addEventListener("keydown", down);
     return () => document.removeEventListener("keydown", down);
-  }, [selectedRowKey, onNext, onPrev]);
+  }, [canNext, canPrev, onNext, onPrev, open]);
 
   return (
     <Sheet
-      open={!!selectedRowKey}
-      onOpenChange={() => {
-        // REMINDER: focus back to the row that was selected
-        // We need to manually focus back due to missing Trigger component
-        const el = selectedRowKey
-          ? document.getElementById(selectedRowKey)
-          : null;
-        table.resetRowSelection();
-
-        // REMINDER: when navigating between tabs in the sheet and exit the sheet, the tab gets lost
-        // We need a minimal delay to allow the sheet to close before focusing back to the row
-        setTimeout(() => el?.focus(), 0);
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen) {
+          onClose();
+        }
       }}
     >
       <SheetContent
-        // onCloseAutoFocus={(e) => e.preventDefault()}
         className="overflow-y-auto p-0 sm:max-w-md"
         hideClose
       >
         <SheetHeader className="sticky top-0 z-10 border-b bg-background p-4">
           <div className="flex items-center justify-between gap-2">
             <SheetTitle className={cn(titleClassName, "truncate text-left")}>
-              {isLoading && !selectedRowKey ? (
-                <Skeleton className="h-7 w-36" />
-              ) : (
-                title
-              )}
+              {isLoading ? <Skeleton className="h-7 w-36" /> : title}
             </SheetTitle>
             <div className="flex h-7 items-center gap-1">
               <TooltipProvider>
@@ -129,7 +98,7 @@ export function DataTableSheetDetails({
                       size="icon"
                       variant="ghost"
                       className="h-7 w-7"
-                      disabled={!prevId}
+                      disabled={!canPrev}
                       onClick={onPrev}
                     >
                       <ChevronUp className="h-5 w-5" />
@@ -150,7 +119,7 @@ export function DataTableSheetDetails({
                       size="icon"
                       variant="ghost"
                       className="h-7 w-7"
-                      disabled={!nextId}
+                      disabled={!canNext}
                       onClick={onNext}
                     >
                       <ChevronDown className="h-5 w-5" />

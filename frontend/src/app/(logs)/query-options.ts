@@ -7,6 +7,7 @@ import type {
 import { searchParamsSerializer, type SearchParamsType } from "./search-params";
 
 export type LogsMeta = {
+  cefEnabled?: boolean;
   cefExtensionKeys?: string[];
   messageFieldKeys?: string[];
 };
@@ -55,11 +56,7 @@ export const dataOptions = (search: SearchParamsType) => {
         live: null,
       });
 
-      // Use localhost in development, and window.location.origin in production
-      const apiBaseUrl =
-        process.env.NODE_ENV === "development"
-          ? "http://localhost:8080"
-          : window.location.origin;
+      const apiBaseUrl = getApiBaseUrl();
       const response = await fetch(`${apiBaseUrl}/api/logs${serialize}`);
       const json = await response.json();
 
@@ -90,4 +87,20 @@ export const dataOptions = (search: SearchParamsType) => {
     refetchOnWindowFocus: true, // Enable refetching on window focus to ensure latest data
     staleTime: 30000, // 30 seconds before data is considered stale
   });
+};
+
+const getApiBaseUrl = () => {
+  const configuredBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(
+    /\/$/,
+    "",
+  );
+  if (configuredBaseUrl) {
+    return configuredBaseUrl;
+  }
+
+  if (typeof window === "undefined") {
+    return "";
+  }
+
+  return window.location.origin;
 };

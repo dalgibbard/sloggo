@@ -3,7 +3,6 @@ import type {
   ColumnDef,
   ColumnFiltersState,
   PaginationState,
-  RowSelectionState,
   SortingState,
   Table,
   VisibilityState,
@@ -18,7 +17,6 @@ import { ControlsProvider } from "../../providers/controls";
 interface DataTableStateContextType {
   columnFilters: ColumnFiltersState;
   sorting: SortingState;
-  rowSelection: RowSelectionState;
   columnOrder: string[];
   columnVisibility: VisibilityState;
   wrapCells: boolean;
@@ -62,7 +60,6 @@ export function DataTableProvider<TData, TValue>({
   const {
     columnFilters,
     sorting,
-    rowSelection,
     columnOrder,
     columnVisibility,
     wrapCells,
@@ -87,7 +84,6 @@ export function DataTableProvider<TData, TValue>({
       getFacetedMinMaxValues,
       columnFilters: columnFilters ?? [],
       sorting: sorting ?? [],
-      rowSelection: rowSelection ?? {},
       columnOrder: columnOrder ?? [],
       columnVisibility: columnVisibility ?? {},
       wrapCells: wrapCells ?? false,
@@ -98,7 +94,6 @@ export function DataTableProvider<TData, TValue>({
     [
       columnFilters,
       sorting,
-      rowSelection,
       columnOrder,
       columnVisibility,
       wrapCells,

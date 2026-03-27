@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"sloggo/models"
+	"sloggo/utils"
 )
 
 type cefMessage struct {
@@ -23,6 +24,9 @@ type cefMessage struct {
 func EnrichLogEntryWithCEF(entry *models.LogEntry) error {
 	if entry == nil {
 		return errors.New("nil log entry")
+	}
+	if !utils.CEFEnabled {
+		return nil
 	}
 
 	message := strings.TrimSpace(entry.Message)

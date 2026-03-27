@@ -20,6 +20,28 @@ import {
 import type { LogsMeta } from "./query-options";
 import { type ColumnSchema } from "./schema";
 
+export const CEF_FILTER_FIELD_IDS = [
+  "cefVersion",
+  "cefDeviceVendor",
+  "cefDeviceProduct",
+  "cefDeviceVersion",
+  "cefSignatureId",
+  "cefName",
+  "cefSeverity",
+  "cefExt",
+] as const;
+
+export const CEF_SHEET_FIELD_IDS = [
+  "cefVersion",
+  "cefDeviceVendor",
+  "cefDeviceProduct",
+  "cefDeviceVersion",
+  "cefSignatureId",
+  "cefName",
+  "cefSeverity",
+  "cefExtensions",
+] as const;
+
 // Syslog facility names
 const SYSLOG_FACILITIES = [
   { label: "Kernel messages", value: 0 },

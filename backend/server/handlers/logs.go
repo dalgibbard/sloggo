@@ -74,67 +74,69 @@ func LogsHandler(w http.ResponseWriter, r *http.Request) {
 	filters := make(map[string]any)
 
 	// Hostname filter
-	if hostname := query.Get("hostname"); hostname != "" {
+	if hostname := getStringQueryFilter(query, "hostname"); hostname != nil {
 		filters["hostname"] = hostname
 	}
 
 	// App name filter
-	if appName := query.Get("appName"); appName != "" {
+	if appName := getStringQueryFilter(query, "appName"); appName != nil {
 		filters["appName"] = appName
 	}
 
 	// Process ID filter
-	if procID := query.Get("procId"); procID != "" {
+	if procID := getStringQueryFilter(query, "procId"); procID != nil {
 		filters["procId"] = procID
 	}
 
 	// Message ID filter
-	if msgID := query.Get("msgId"); msgID != "" {
+	if msgID := getStringQueryFilter(query, "msgId"); msgID != nil {
 		filters["msgId"] = msgID
 	}
 
 	// Message filter
-	if message := query.Get("message"); message != "" {
+	if message := getStringQueryFilter(query, "message"); message != nil {
 		filters["message"] = message
 	}
 
 	// Format filter
-	if format := query.Get("format"); format != "" {
+	if format := getStringQueryFilter(query, "format"); format != nil {
 		filters["format"] = format
 	}
 
-	if cefVersion := query.Get("cefVersion"); cefVersion != "" {
-		filters["cefVersion"] = cefVersion
-	}
+	if utils.CEFEnabled {
+		if cefVersion := getStringQueryFilter(query, "cefVersion"); cefVersion != nil {
+			filters["cefVersion"] = cefVersion
+		}
 
-	if cefDeviceVendor := query.Get("cefDeviceVendor"); cefDeviceVendor != "" {
-		filters["cefDeviceVendor"] = cefDeviceVendor
-	}
+		if cefDeviceVendor := getStringQueryFilter(query, "cefDeviceVendor"); cefDeviceVendor != nil {
+			filters["cefDeviceVendor"] = cefDeviceVendor
+		}
 
-	if cefDeviceProduct := query.Get("cefDeviceProduct"); cefDeviceProduct != "" {
-		filters["cefDeviceProduct"] = cefDeviceProduct
-	}
+		if cefDeviceProduct := getStringQueryFilter(query, "cefDeviceProduct"); cefDeviceProduct != nil {
+			filters["cefDeviceProduct"] = cefDeviceProduct
+		}
 
-	if cefDeviceVersion := query.Get("cefDeviceVersion"); cefDeviceVersion != "" {
-		filters["cefDeviceVersion"] = cefDeviceVersion
-	}
+		if cefDeviceVersion := getStringQueryFilter(query, "cefDeviceVersion"); cefDeviceVersion != nil {
+			filters["cefDeviceVersion"] = cefDeviceVersion
+		}
 
-	if cefSignatureID := query.Get("cefSignatureId"); cefSignatureID != "" {
-		filters["cefSignatureId"] = cefSignatureID
-	}
+		if cefSignatureID := getStringQueryFilter(query, "cefSignatureId"); cefSignatureID != nil {
+			filters["cefSignatureId"] = cefSignatureID
+		}
 
-	if cefName := query.Get("cefName"); cefName != "" {
-		filters["cefName"] = cefName
-	}
+		if cefName := getStringQueryFilter(query, "cefName"); cefName != nil {
+			filters["cefName"] = cefName
+		}
 
-	if cefSeverity := query.Get("cefSeverity"); cefSeverity != "" {
-		filters["cefSeverity"] = cefSeverity
-	}
+		if cefSeverity := getStringQueryFilter(query, "cefSeverity"); cefSeverity != nil {
+			filters["cefSeverity"] = cefSeverity
+		}
 
-	if cefExtStr := query.Get("cefExt"); cefExtStr != "" {
-		var cefExt map[string]string
-		if err := json.Unmarshal([]byte(cefExtStr), &cefExt); err == nil && len(cefExt) > 0 {
-			filters["cefExt"] = cefExt
+		if cefExtStr := query.Get("cefExt"); cefExtStr != "" {
+			var cefExt map[string]string
+			if err := json.Unmarshal([]byte(cefExtStr), &cefExt); err == nil && len(cefExt) > 0 {
+				filters["cefExt"] = cefExt
+			}
 		}
 	}
 
@@ -238,7 +240,11 @@ func LogsHandler(w http.ResponseWriter, r *http.Request) {
 	var messageFieldKeys []string
 	var logsErr, facetsErr, chartErr, cefKeysErr, msgKeysErr error
 
-	wg.Add(5)
+	numTasks := 4
+	if utils.CEFEnabled {
+		numTasks++
+	}
+	wg.Add(numTasks)
 
 	// Time for all database operations
 	queryStartTime := time.Now()
@@ -273,14 +279,16 @@ func LogsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
-	go func() {
-		defer wg.Done()
-		cefExtensionKeys, cefKeysErr = db.GetCEFExtensionKeys(filters)
+	if utils.CEFEnabled {
+		go func() {
+			defer wg.Done()
+			cefExtensionKeys, cefKeysErr = db.GetCEFExtensionKeys(filters)
 
-		if utils.Debug {
-			log.Printf("⚡️ GetCEFExtensionKeys execution time: %v", time.Since(queryStartTime))
-		}
-	}()
+			if utils.Debug {
+				log.Printf("⚡️ GetCEFExtensionKeys execution time: %v", time.Since(queryStartTime))
+			}
+		}()
+	}
 
 	go func() {
 		defer wg.Done()
@@ -387,6 +395,7 @@ func LogsHandler(w http.ResponseWriter, r *http.Request) {
 			ChartData:      chartData,
 			Facets:         facets,
 			Metadata: map[string]any{
+				"cefEnabled":       utils.CEFEnabled,
 				"cefExtensionKeys": cefExtensionKeys,
 				"messageFieldKeys": messageFieldKeys,
 			},
@@ -413,5 +422,44 @@ func LogsHandler(w http.ResponseWriter, r *http.Request) {
 	if utils.Debug {
 		log.Printf("⚡️ JSON encoding time: %v", time.Since(encodeStartTime))
 		log.Printf("⚡️ Total request handling time: %v\n\n", time.Since(requestStartTime))
+	}
+}
+
+func getStringQueryFilter(query map[string][]string, key string) any {
+	values, ok := query[key]
+	if !ok || len(values) == 0 {
+		return nil
+	}
+
+	normalizedValues := make([]string, 0, len(values))
+	for _, value := range values {
+		trimmedValue := strings.TrimSpace(value)
+		if trimmedValue == "" {
+			continue
+		}
+
+		if strings.HasPrefix(trimmedValue, "[") {
+			var parsedValues []string
+			if err := json.Unmarshal([]byte(trimmedValue), &parsedValues); err == nil {
+				for _, parsedValue := range parsedValues {
+					trimmedParsedValue := strings.TrimSpace(parsedValue)
+					if trimmedParsedValue != "" {
+						normalizedValues = append(normalizedValues, trimmedParsedValue)
+					}
+				}
+				continue
+			}
+		}
+
+		normalizedValues = append(normalizedValues, trimmedValue)
+	}
+
+	switch len(normalizedValues) {
+	case 0:
+		return nil
+	case 1:
+		return normalizedValues[0]
+	default:
+		return normalizedValues
 	}
 }

@@ -125,12 +125,13 @@ func setupDatabaseTable() {
 		log.Fatalf("Failed to create table %s: %v", logsTableName, err)
 	}
 
-	if err := ensureLogsTableSchema(logsTableName); err != nil {
+	if err := ensureLogsTableSchema(); err != nil {
 		log.Fatalf("Failed to migrate table %s: %v", logsTableName, err)
 	}
 }
 
-func ensureLogsTableSchema(table string) error {
+func ensureLogsTableSchema() error {
+	table := logsTableName
 	ctx := context.Background()
 	existingColumns, err := getTableColumns(table)
 	if err != nil {
@@ -278,6 +279,11 @@ func processBatchStoreLogsWithEntries(entries []models.LogEntry) error {
 		return nil
 	}
 
+	columnOrder, err := getTableColumns(logsTableName)
+	if err != nil {
+		return fmt.Errorf("get logs table columns: %w", err)
+	}
+
 	// Get the underlying DuckDB connection from sql.DB
 	dbConn, err := db.Conn(context.Background())
 	if err != nil {
@@ -312,28 +318,12 @@ func processBatchStoreLogsWithEntries(entries []models.LogEntry) error {
 	// Append each log entry directly from struct fields
 	for i := range entries {
 		entry := &entries[i]
-		if err := appender.AppendRow(
-			entry.Severity,
-			entry.Facility,
-			entry.Version,
-			entry.Timestamp,
-			entry.Hostname,
-			entry.AppName,
-			entry.ProcID,
-			entry.MsgID,
-			entry.StructuredData,
-			entry.Message,
-			entry.MessageFields,
-			entry.Format,
-			entry.CEFVersion,
-			entry.CEFDeviceVendor,
-			entry.CEFDeviceProduct,
-			entry.CEFDeviceVersion,
-			entry.CEFSignatureID,
-			entry.CEFName,
-			entry.CEFSeverity,
-			entry.CEFExtensions,
-		); err != nil {
+		rowValues, err := buildAppenderRowValues(*entry, columnOrder)
+		if err != nil {
+			return fmt.Errorf("build appender row %d: %w", i+1, err)
+		}
+
+		if err := appender.AppendRow(rowValues...); err != nil {
 			log.Printf("Failed to append row %d: %v", i+1, err)
 			return err
 		}
@@ -345,6 +335,42 @@ func processBatchStoreLogsWithEntries(entries []models.LogEntry) error {
 		return err
 	}
 	return nil
+}
+
+func buildAppenderRowValues(entry models.LogEntry, columnOrder []string) ([]driver.Value, error) {
+	valuesByColumn := map[string]driver.Value{
+		"severity":           entry.Severity,
+		"facility":           entry.Facility,
+		"version":            entry.Version,
+		"timestamp":          entry.Timestamp,
+		"hostname":           entry.Hostname,
+		"app_name":           entry.AppName,
+		"procid":             entry.ProcID,
+		"msgid":              entry.MsgID,
+		"structured_data":    entry.StructuredData,
+		"msg":                entry.Message,
+		"message_fields":     entry.MessageFields,
+		"format":             entry.Format,
+		"cef_version":        entry.CEFVersion,
+		"cef_device_vendor":  entry.CEFDeviceVendor,
+		"cef_device_product": entry.CEFDeviceProduct,
+		"cef_device_version": entry.CEFDeviceVersion,
+		"cef_signature_id":   entry.CEFSignatureID,
+		"cef_name":           entry.CEFName,
+		"cef_severity":       entry.CEFSeverity,
+		"cef_extensions":     entry.CEFExtensions,
+	}
+
+	rowValues := make([]driver.Value, 0, len(columnOrder))
+	for _, columnName := range columnOrder {
+		value, ok := valuesByColumn[columnName]
+		if !ok {
+			return nil, fmt.Errorf("unsupported logs column %q", columnName)
+		}
+		rowValues = append(rowValues, value)
+	}
+
+	return rowValues, nil
 }
 
 // processBatchPeriodically processes any pending logs on a timer
@@ -1016,9 +1042,27 @@ func buildCEFJSONPath(key string) string {
 	return fmt.Sprintf(`$.%q`, key)
 }
 
-func getStringFilter(value any) (string, bool) {
-	filterValue, ok := value.(string)
-	return filterValue, ok
+func getStringFilters(value any) ([]string, bool) {
+	switch filterValue := value.(type) {
+	case string:
+		if filterValue == "" {
+			return nil, false
+		}
+		return []string{filterValue}, true
+	case []string:
+		normalizedValues := make([]string, 0, len(filterValue))
+		for _, entry := range filterValue {
+			if entry != "" {
+				normalizedValues = append(normalizedValues, entry)
+			}
+		}
+		if len(normalizedValues) == 0 {
+			return nil, false
+		}
+		return normalizedValues, true
+	default:
+		return nil, false
+	}
 }
 
 type stringConditionOptions struct {
@@ -1026,8 +1070,8 @@ type stringConditionOptions struct {
 }
 
 func buildStringCondition(column string, value any, args *[]any, options ...stringConditionOptions) (string, bool) {
-	filterValue, ok := getStringFilter(value)
-	if !ok || filterValue == "" {
+	filterValues, ok := getStringFilters(value)
+	if !ok || len(filterValues) == 0 {
 		return "", false
 	}
 
@@ -1036,12 +1080,63 @@ func buildStringCondition(column string, value any, args *[]any, options ...stri
 		settings = options[0]
 	}
 
-	exclude := strings.HasPrefix(filterValue, "!")
-	rawValue := strings.TrimPrefix(filterValue, "!")
-	if rawValue == "" {
+	includeConditions := make([]string, 0, len(filterValues))
+	excludeRawValues := make([]string, 0, len(filterValues))
+	includeRawValues := make([]string, 0, len(filterValues))
+
+	for _, filterValue := range filterValues {
+		exclude := strings.HasPrefix(filterValue, "!")
+		rawValue := strings.TrimPrefix(filterValue, "!")
+		if rawValue == "" {
+			continue
+		}
+
+		if exclude {
+			excludeRawValues = append(excludeRawValues, rawValue)
+			continue
+		}
+
+		includeRawValues = append(includeRawValues, rawValue)
+	}
+
+	excludeConditions := make([]string, 0, len(excludeRawValues))
+
+	for _, rawValue := range includeRawValues {
+		condition, ok := buildSingleStringCondition(column, rawValue, false, settings, args)
+		if ok {
+			includeConditions = append(includeConditions, condition)
+		}
+	}
+
+	for _, rawValue := range excludeRawValues {
+		condition, ok := buildSingleStringCondition(column, rawValue, true, settings, args)
+		if ok {
+			excludeConditions = append(excludeConditions, condition)
+		}
+	}
+
+	if len(includeConditions) == 0 && len(excludeConditions) == 0 {
 		return "", false
 	}
 
+	conditions := make([]string, 0, 1+len(excludeConditions))
+	if len(includeConditions) == 1 {
+		conditions = append(conditions, includeConditions[0])
+	} else if len(includeConditions) > 1 {
+		conditions = append(conditions, fmt.Sprintf("(%s)", strings.Join(includeConditions, " OR ")))
+	}
+
+	conditions = append(conditions, excludeConditions...)
+	return strings.Join(conditions, " AND "), true
+}
+
+func buildSingleStringCondition(
+	column string,
+	rawValue string,
+	exclude bool,
+	settings stringConditionOptions,
+	args *[]any,
+) (string, bool) {
 	if settings.PartialByDefault || strings.Contains(rawValue, "*") {
 		pattern := buildLikePattern(rawValue, settings.PartialByDefault)
 		if pattern == "" {
@@ -1055,12 +1150,11 @@ func buildStringCondition(column string, value any, args *[]any, options ...stri
 		return fmt.Sprintf("LOWER(COALESCE(%s, '')) LIKE LOWER(?) ESCAPE '\\'", column), true
 	}
 
+	*args = append(*args, rawValue)
 	if exclude {
-		*args = append(*args, rawValue)
 		return fmt.Sprintf("%s IS DISTINCT FROM ?", column), true
 	}
 
-	*args = append(*args, rawValue)
 	return fmt.Sprintf("%s = ?", column), true
 }
 

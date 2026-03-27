@@ -4,11 +4,13 @@ import (
 	"testing"
 
 	"sloggo/models"
+	"sloggo/utils"
 
 	"github.com/leodido/go-syslog/v4/rfc5424"
 )
 
 func TestEnrichLogEntryWithCEFFromRFC5424(t *testing.T) {
+	restoreCEFEnabled(t, true)
 	parser := rfc5424.NewParser(rfc5424.WithBestEffort())
 	syslogMsg, err := parser.Parse([]byte("<165>1 2023-10-01T12:34:56Z host1 app1 2345 ID01 - CEF:0|Security|threatmanager|1.0|100|worm successfully stopped|10|src=198.51.100.10 dst=203.0.113.20 spt=1232"))
 	if err != nil {
@@ -44,6 +46,7 @@ func TestEnrichLogEntryWithCEFFromRFC5424(t *testing.T) {
 }
 
 func TestEnrichLogEntryWithCEFFromRFC3164(t *testing.T) {
+	restoreCEFEnabled(t, true)
 	entry, err := ParseRFC3164ToLogEntry("<134>Feb  1 11:37:00 edge-bridge mdns: CEF:1|Acme|dns-gateway|2.5|dnsAdBlock|Blocked query|Medium|cat=ADVERTISEMENT request=telemetry.example.invalid src=198.51.100.17 dst=127.0.0.1 proto=udp")
 	if err != nil {
 		t.Fatalf("parse rfc3164: %v", err)
@@ -65,6 +68,7 @@ func TestEnrichLogEntryWithCEFFromRFC3164(t *testing.T) {
 }
 
 func TestEnrichLogEntryWithCEFFromRFC3164WithoutPriority(t *testing.T) {
+	restoreCEFEnabled(t, true)
 	entry, err := ParseRFC3164ToLogEntry(`Mar 25 20:41:15 gateway-node CEF:0|Ubiquiti|UniFi Network|10.2.97|544|Network Accessed|4|src=198.51.100.17 UNIFIcategory=Audit UNIFIhost=Gateway Node`)
 	if err != nil {
 		t.Fatalf("parse rfc3164 without priority: %v", err)
@@ -89,6 +93,7 @@ func TestEnrichLogEntryWithCEFFromRFC3164WithoutPriority(t *testing.T) {
 }
 
 func TestEnrichLogEntryWithCEFDecodesEscapes(t *testing.T) {
+	restoreCEFEnabled(t, true)
 	entry := testLogEntry("CEF:0|security|threatmanager|1.0|100|detected a \\| in message|10|src=198.51.100.10 act=blocked a \\= with \\\\ slash msg=Detected a threat.\\n No action needed filePath=/tmp/my file name.txt")
 
 	if err := EnrichLogEntryWithCEF(&entry); err != nil {
@@ -110,6 +115,7 @@ func TestEnrichLogEntryWithCEFDecodesEscapes(t *testing.T) {
 }
 
 func TestEnrichLogEntryWithCEFMalformedFallsBack(t *testing.T) {
+	restoreCEFEnabled(t, true)
 	entry := testLogEntry("CEF:0|security|threatmanager|1.0|100|detected a \\| in message|10|src=198.51.100.10")
 	entry.Message = "CEF:0|only|two"
 	entry.Format = "syslog"
@@ -127,6 +133,7 @@ func TestEnrichLogEntryWithCEFMalformedFallsBack(t *testing.T) {
 }
 
 func TestEnrichLogEntryWithCEFNoopForNonCEF(t *testing.T) {
+	restoreCEFEnabled(t, true)
 	entry := testLogEntry("plain syslog body")
 	entry.Message = "plain syslog body"
 	entry.Format = "syslog"
@@ -140,9 +147,35 @@ func TestEnrichLogEntryWithCEFNoopForNonCEF(t *testing.T) {
 	}
 }
 
+func TestEnrichLogEntryWithCEFNoopWhenDisabled(t *testing.T) {
+	restoreCEFEnabled(t, false)
+	entry := testLogEntry("CEF:0|Security|threatmanager|1.0|100|worm successfully stopped|10|src=198.51.100.10")
+
+	if err := EnrichLogEntryWithCEF(&entry); err != nil {
+		t.Fatalf("unexpected error when cef disabled: %v", err)
+	}
+
+	if entry.Format != "syslog" {
+		t.Fatalf("expected syslog format when cef disabled, got %q", entry.Format)
+	}
+	if entry.CEFName != "" {
+		t.Fatalf("expected no cef fields when disabled, got %q", entry.CEFName)
+	}
+}
+
 func testLogEntry(message string) models.LogEntry {
 	return models.LogEntry{
 		Message: message,
 		Format:  "syslog",
 	}
+}
+
+func restoreCEFEnabled(t *testing.T, enabled bool) {
+	t.Helper()
+
+	previous := utils.CEFEnabled
+	utils.CEFEnabled = enabled
+	t.Cleanup(func() {
+		utils.CEFEnabled = previous
+	})
 }
