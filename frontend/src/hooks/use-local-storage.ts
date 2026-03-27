@@ -2,40 +2,50 @@
 
 import { useEffect, useState, useCallback } from "react";
 
-function getItemFromLocalStorage(key: string) {
-  const item = window?.localStorage.getItem(key);
-  if (item) return JSON.parse(item);
+function getItemFromLocalStorage<T>(key: string, fallback: T): T {
+  if (typeof window === "undefined") {
+    return fallback;
+  }
 
-  return null;
+  const item = window.localStorage.getItem(key);
+  if (!item) {
+    return fallback;
+  }
+
+  try {
+    return JSON.parse(item) as T;
+  } catch {
+    return fallback;
+  }
 }
 
 export function useLocalStorage<T>(
   key: string,
   initialValue: T
 ): [T, React.Dispatch<React.SetStateAction<T>>] {
-  const [storedValue, setStoredValue] = useState(initialValue);
+  const [storedValue, setStoredValue] = useState<T>(() =>
+    getItemFromLocalStorage(key, initialValue)
+  );
 
   useEffect(() => {
-    // initialize
-    if (typeof window !== "undefined") {
-      const stored = getItemFromLocalStorage(key);
-      if (stored !== null) setStoredValue(stored);
-    }
-  }, [key]);
+    setStoredValue(getItemFromLocalStorage(key, initialValue));
+  }, [initialValue, key]);
 
   const setValue: React.Dispatch<React.SetStateAction<T>> = useCallback(
     (value) => {
       if (value instanceof Function) {
         setStoredValue((prev: T) => {
           const newValue = value(prev);
-          // Save to localStorage
-          window.localStorage.setItem(key, JSON.stringify(newValue));
+          if (typeof window !== "undefined") {
+            window.localStorage.setItem(key, JSON.stringify(newValue));
+          }
           return newValue;
         });
       } else {
         setStoredValue(value);
-        // Save to localStorage
-        window.localStorage.setItem(key, JSON.stringify(value));
+        if (typeof window !== "undefined") {
+          window.localStorage.setItem(key, JSON.stringify(value));
+        }
       }
       return setStoredValue;
     },
