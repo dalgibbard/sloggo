@@ -1,6 +1,8 @@
 package listener
 
 import (
+	"context"
+	"errors"
 	"log"
 	"net"
 	"sloggo/db"
@@ -27,9 +29,9 @@ func getUDPRFC5424Parser() syslog.Machine {
 }
 
 func StartUDPListener() {
-	port := utils.UdpPort
+	port := utils.UDPPort
 
-	intPort, err := net.LookupPort("udp", port)
+	intPort, err := net.DefaultResolver.LookupPort(context.Background(), "udp", port)
 	if err != nil {
 		log.Fatalf("Invalid UDP port %s: %v", port, err)
 	}
@@ -59,11 +61,15 @@ func StartUDPListener() {
 	buffer := make([]byte, bufferSize)
 
 	for {
-		listener.SetReadDeadline(time.Now().Add(30 * time.Second))
+		if err := listener.SetReadDeadline(time.Now().Add(30 * time.Second)); err != nil {
+			log.Printf("Failed to set UDP read deadline: %v", err)
+			continue
+		}
 
 		n, _, err := listener.ReadFromUDP(buffer)
 		if err != nil {
-			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+			var netErr net.Error
+			if errors.As(err, &netErr) && netErr.Timeout() {
 				// Just a timeout, continue
 				continue
 			}
@@ -121,6 +127,9 @@ func processUDPMessage(message []byte) {
 			if syslogMsg, err := parser.Parse([]byte(part)); err == nil {
 				if rfc5424Msg, ok := syslogMsg.(*rfc5424.SyslogMessage); ok {
 					if logEntry := formats.SyslogMessageToLogEntry(rfc5424Msg); logEntry != nil {
+						if err := formats.EnrichLogEntryWithCEF(logEntry); err != nil {
+							log.Printf("Failed to parse CEF payload, storing as syslog: %v", err)
+						}
 						if err := db.StoreLog(*logEntry); err != nil {
 							log.Printf("Error storing UDP log: %v", err)
 						}
@@ -135,6 +144,9 @@ func processUDPMessage(message []byte) {
 		// Try RFC3164 if enabled and not yet parsed
 		if !parsed && (logFormat == "rfc3164" || logFormat == "auto") {
 			if logEntry, err := formats.ParseRFC3164ToLogEntry(part); err == nil {
+				if err := formats.EnrichLogEntryWithCEF(logEntry); err != nil {
+					log.Printf("Failed to parse CEF payload, storing as syslog: %v", err)
+				}
 				if err := db.StoreLog(*logEntry); err != nil {
 					log.Printf("Error storing UDP log: %v", err)
 				}

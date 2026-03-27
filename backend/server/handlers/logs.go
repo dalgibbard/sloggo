@@ -74,23 +74,77 @@ func LogsHandler(w http.ResponseWriter, r *http.Request) {
 	filters := make(map[string]any)
 
 	// Hostname filter
-	if hostname := query.Get("hostname"); hostname != "" {
+	if hostname := getStringQueryFilter(query, "hostname"); hostname != nil {
 		filters["hostname"] = hostname
 	}
 
 	// App name filter
-	if appName := query.Get("appName"); appName != "" {
+	if appName := getStringQueryFilter(query, "appName"); appName != nil {
 		filters["appName"] = appName
 	}
 
 	// Process ID filter
-	if procId := query.Get("procId"); procId != "" {
-		filters["procId"] = procId
+	if procID := getStringQueryFilter(query, "procId"); procID != nil {
+		filters["procId"] = procID
 	}
 
 	// Message ID filter
-	if msgId := query.Get("msgId"); msgId != "" {
-		filters["msgId"] = msgId
+	if msgID := getStringQueryFilter(query, "msgId"); msgID != nil {
+		filters["msgId"] = msgID
+	}
+
+	// Message filter
+	if message := getStringQueryFilter(query, "message"); message != nil {
+		filters["message"] = message
+	}
+
+	// Format filter
+	if format := getStringQueryFilter(query, "format"); format != nil {
+		filters["format"] = format
+	}
+
+	if utils.CEFEnabled {
+		if cefVersion := getStringQueryFilter(query, "cefVersion"); cefVersion != nil {
+			filters["cefVersion"] = cefVersion
+		}
+
+		if cefDeviceVendor := getStringQueryFilter(query, "cefDeviceVendor"); cefDeviceVendor != nil {
+			filters["cefDeviceVendor"] = cefDeviceVendor
+		}
+
+		if cefDeviceProduct := getStringQueryFilter(query, "cefDeviceProduct"); cefDeviceProduct != nil {
+			filters["cefDeviceProduct"] = cefDeviceProduct
+		}
+
+		if cefDeviceVersion := getStringQueryFilter(query, "cefDeviceVersion"); cefDeviceVersion != nil {
+			filters["cefDeviceVersion"] = cefDeviceVersion
+		}
+
+		if cefSignatureID := getStringQueryFilter(query, "cefSignatureId"); cefSignatureID != nil {
+			filters["cefSignatureId"] = cefSignatureID
+		}
+
+		if cefName := getStringQueryFilter(query, "cefName"); cefName != nil {
+			filters["cefName"] = cefName
+		}
+
+		if cefSeverity := getStringQueryFilter(query, "cefSeverity"); cefSeverity != nil {
+			filters["cefSeverity"] = cefSeverity
+		}
+
+		if cefExtStr := query.Get("cefExt"); cefExtStr != "" {
+			var cefExt map[string]string
+			if err := json.Unmarshal([]byte(cefExtStr), &cefExt); err == nil && len(cefExt) > 0 {
+				filters["cefExt"] = cefExt
+			}
+		}
+	}
+
+	if msgFieldStr := query.Get("msgField"); msgFieldStr != "" {
+		var msgField map[string]string
+		if err := json.Unmarshal([]byte(msgFieldStr), &msgField); err == nil && len(msgField) > 0 {
+			filters["msgField"] = msgField
+		}
 	}
 
 	// Facility filter
@@ -182,9 +236,15 @@ func LogsHandler(w http.ResponseWriter, r *http.Request) {
 	var totalCount, filterCount int
 	var facets map[string]db.FacetMetadata
 	var chartData []db.ChartDataPoint
-	var logsErr, facetsErr, chartErr error
+	var cefExtensionKeys []string
+	var messageFieldKeys []string
+	var logsErr, facetsErr, chartErr, cefKeysErr, msgKeysErr error
 
-	wg.Add(3)
+	numTasks := 4
+	if utils.CEFEnabled {
+		numTasks++
+	}
+	wg.Add(numTasks)
 
 	// Time for all database operations
 	queryStartTime := time.Now()
@@ -219,6 +279,26 @@ func LogsHandler(w http.ResponseWriter, r *http.Request) {
 		}
 	}()
 
+	if utils.CEFEnabled {
+		go func() {
+			defer wg.Done()
+			cefExtensionKeys, cefKeysErr = db.GetCEFExtensionKeys(filters)
+
+			if utils.Debug {
+				log.Printf("⚡️ GetCEFExtensionKeys execution time: %v", time.Since(queryStartTime))
+			}
+		}()
+	}
+
+	go func() {
+		defer wg.Done()
+		messageFieldKeys, msgKeysErr = db.GetMessageFieldKeys(filters)
+
+		if utils.Debug {
+			log.Printf("⚡️ GetMessageFieldKeys execution time: %v", time.Since(queryStartTime))
+		}
+	}()
+
 	// Wait for all goroutines to complete
 	wg.Wait()
 	if utils.Debug {
@@ -243,11 +323,25 @@ func LogsHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if cefKeysErr != nil {
+		log.Printf("Error fetching CEF extension keys: %v", cefKeysErr)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
+	if msgKeysErr != nil {
+		log.Printf("Error fetching message field keys: %v", msgKeysErr)
+		http.Error(w, "Internal server error", http.StatusInternalServerError)
+		return
+	}
+
 	// Process logs for API response format
 	processStartTime := time.Now()
 	for i := range logs {
 		// Parse structured data JSON if present
 		structData := make(map[string]map[string]string)
+		cefExtensions := make(map[string]string)
+		messageFields := make(map[string]string)
 
 		if logs[i].StructuredData != "" && logs[i].StructuredData != "-" {
 			// Attempt to parse the JSON data
@@ -256,8 +350,21 @@ func LogsHandler(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		// Calculate priority
 		logs[i].ParsedStructuredData = structData
+		if logs[i].CEFExtensions != "" && logs[i].CEFExtensions != "{}" {
+			if err := json.Unmarshal([]byte(logs[i].CEFExtensions), &cefExtensions); err != nil {
+				log.Printf("Error parsing CEF extensions for row %d", logs[i].RowID)
+			}
+		}
+		logs[i].ParsedCEFExtensions = cefExtensions
+		if logs[i].MessageFields != "" && logs[i].MessageFields != "{}" {
+			if err := json.Unmarshal([]byte(logs[i].MessageFields), &messageFields); err != nil {
+				log.Printf("Error parsing message fields for row %d", logs[i].RowID)
+			}
+		} else if extracted := utils.ExtractJSONMessageFields(logs[i].Message); len(extracted) > 0 {
+			messageFields = extracted
+		}
+		logs[i].ParsedMessageFields = messageFields
 
 		// Ensure timestamp is properly formatted for JavaScript to parse
 		// This is already handled by Go's JSON marshaller, but making it explicit
@@ -287,7 +394,11 @@ func LogsHandler(w http.ResponseWriter, r *http.Request) {
 			FilterRowCount: filterCount,
 			ChartData:      chartData,
 			Facets:         facets,
-			Metadata:       map[string]any{},
+			Metadata: map[string]any{
+				"cefEnabled":       utils.CEFEnabled,
+				"cefExtensionKeys": cefExtensionKeys,
+				"messageFieldKeys": messageFieldKeys,
+			},
 		},
 		NextCursor: nextCursor,
 		PrevCursor: prevCursor,
@@ -311,5 +422,44 @@ func LogsHandler(w http.ResponseWriter, r *http.Request) {
 	if utils.Debug {
 		log.Printf("⚡️ JSON encoding time: %v", time.Since(encodeStartTime))
 		log.Printf("⚡️ Total request handling time: %v\n\n", time.Since(requestStartTime))
+	}
+}
+
+func getStringQueryFilter(query map[string][]string, key string) any {
+	values, ok := query[key]
+	if !ok || len(values) == 0 {
+		return nil
+	}
+
+	normalizedValues := make([]string, 0, len(values))
+	for _, value := range values {
+		trimmedValue := strings.TrimSpace(value)
+		if trimmedValue == "" {
+			continue
+		}
+
+		if strings.HasPrefix(trimmedValue, "[") {
+			var parsedValues []string
+			if err := json.Unmarshal([]byte(trimmedValue), &parsedValues); err == nil {
+				for _, parsedValue := range parsedValues {
+					trimmedParsedValue := strings.TrimSpace(parsedValue)
+					if trimmedParsedValue != "" {
+						normalizedValues = append(normalizedValues, trimmedParsedValue)
+					}
+				}
+				continue
+			}
+		}
+
+		normalizedValues = append(normalizedValues, trimmedValue)
+	}
+
+	switch len(normalizedValues) {
+	case 0:
+		return nil
+	case 1:
+		return normalizedValues[0]
+	default:
+		return normalizedValues
 	}
 }

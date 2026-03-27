@@ -164,9 +164,12 @@ function DatePresetsSelect({
   onSelect: (date: DateRange | undefined) => void;
   presets: DatePreset[];
 }) {
-  function findPreset(from?: Date, to?: Date) {
-    return presets.find((p) => p.from === from && p.to === to)?.shortcut;
-  }
+  const findPreset = React.useCallback(
+    (from?: Date, to?: Date) => {
+      return presets.find((p) => p.from === from && p.to === to)?.shortcut;
+    },
+    [presets],
+  );
   const [value, setValue] = React.useState<string | undefined>(
     findPreset(selected?.from, selected?.to),
   );
@@ -175,7 +178,7 @@ function DatePresetsSelect({
     const preset = findPreset(selected?.from, selected?.to);
     if (preset === value) return;
     setValue(preset);
-  }, [selected, presets]);
+  }, [selected, value, findPreset]);
 
   return (
     <Select

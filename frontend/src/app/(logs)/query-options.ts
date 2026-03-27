@@ -1,5 +1,4 @@
-import { infiniteQueryOptions, keepPreviousData } from "@tanstack/react-query";
-import SuperJSON from "superjson";
+import { infiniteQueryOptions } from "@tanstack/react-query";
 import type {
   BaseChartSchema,
   ColumnSchema,
@@ -7,8 +6,10 @@ import type {
 } from "./schema";
 import { searchParamsSerializer, type SearchParamsType } from "./search-params";
 
-export type SyslogMeta = {
-  // Add any specific metadata from the Go API if needed
+export type LogsMeta = {
+  cefEnabled?: boolean;
+  cefExtensionKeys?: string[];
+  messageFieldKeys?: string[];
 };
 
 export type InfiniteQueryMeta<TMeta = Record<string, unknown>> = {
@@ -55,11 +56,7 @@ export const dataOptions = (search: SearchParamsType) => {
         live: null,
       });
 
-      // Use localhost in development, and window.location.origin in production
-      const apiBaseUrl =
-        process.env.NODE_ENV === "development"
-          ? "http://localhost:8080"
-          : window.location.origin;
+      const apiBaseUrl = getApiBaseUrl();
       const response = await fetch(`${apiBaseUrl}/api/logs${serialize}`);
       const json = await response.json();
 
@@ -74,9 +71,9 @@ export const dataOptions = (search: SearchParamsType) => {
         );
       }
 
-      return json as InfiniteQueryResponse<ColumnSchema[], SyslogMeta>;
+      return json as InfiniteQueryResponse<ColumnSchema[], LogsMeta>;
     },
-    initialPageParam: { cursor: Date.now(), direction: "next" },
+    initialPageParam: { cursor: getInitialCursor(), direction: "next" },
     getPreviousPageParam: (firstPage, _pages) => {
       // For previous page, use the previous cursor or null if it doesn't exist
       if (!firstPage.prevCursor) return null;
@@ -88,7 +85,22 @@ export const dataOptions = (search: SearchParamsType) => {
       return { cursor: lastPage.nextCursor, direction: "next" };
     },
     refetchOnWindowFocus: true, // Enable refetching on window focus to ensure latest data
-    placeholderData: keepPreviousData,
     staleTime: 30000, // 30 seconds before data is considered stale
   });
+};
+
+const getApiBaseUrl = () => {
+  const configuredBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(
+    /\/$/,
+    "",
+  );
+  if (configuredBaseUrl) {
+    return configuredBaseUrl;
+  }
+
+  if (typeof window === "undefined") {
+    return "";
+  }
+
+  return window.location.origin;
 };

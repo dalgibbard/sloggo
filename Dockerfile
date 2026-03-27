@@ -26,9 +26,43 @@ COPY frontend/pnpm-lock.yaml frontend/package.json ./
 RUN pnpm fetch
 
 COPY frontend/ .
-RUN pnpm install --offline
+RUN CI=true pnpm install --offline --frozen-lockfile --config.confirmModulesPurge=false
 RUN pnpm exec next telemetry disable
 RUN pnpm build
+
+# Stage 2b: Frontend dev/debug image
+FROM node:22-trixie-slim AS frontend-dev
+
+RUN corepack enable && corepack prepare pnpm@latest --activate
+WORKDIR /app
+
+COPY frontend/pnpm-lock.yaml frontend/package.json ./
+RUN pnpm fetch
+
+COPY frontend/ .
+RUN CI=true pnpm install --offline --frozen-lockfile --config.confirmModulesPurge=false
+RUN pnpm exec next telemetry disable
+
+EXPOSE 3000
+
+CMD ["pnpm", "exec", "next", "dev", "--hostname", "0.0.0.0", "--port", "3000"]
+
+# Stage 2c: Full debug image with backend + Next.js dev frontend
+FROM node:22-trixie-slim AS debug-runtime
+
+RUN corepack enable && corepack prepare pnpm@latest --activate
+WORKDIR /app
+
+COPY --from=frontend-dev /app /app
+COPY --from=go-builder /app/sloggo /app/sloggo
+COPY --from=go-builder /app/.duckdb /app/.duckdb
+COPY docker/sloggo-debug.sh /usr/local/bin/sloggo-debug
+
+RUN chmod +x /usr/local/bin/sloggo-debug
+
+EXPOSE 3000 8080 5514 6514
+
+CMD ["/usr/local/bin/sloggo-debug"]
 
 # Stage 3: Final runtime image
 FROM gcr.io/distroless/cc-debian13 AS runtime

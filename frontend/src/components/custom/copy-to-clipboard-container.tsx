@@ -51,7 +51,7 @@ export const CopyToClipboardContainer = React.forwardRef<
         setCollapsible(false);
       }
     }
-  }, [innerRef.current, maxHeight]);
+  }, [maxHeight]);
 
   return (
     <div
@@ -79,9 +79,15 @@ export const CopyToClipboardContainer = React.forwardRef<
         variant="outline"
         size="icon"
         className="absolute right-2 top-2 h-6 w-6 opacity-0 focus:opacity-100 group-hover:opacity-100 peer-focus:opacity-100"
-        onClick={() => {
+        onClick={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
           const content = innerRef.current?.textContent;
           if (content) copy(content);
+        }}
+        onMouseDown={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
         }}
       >
         {!isCopied ? (
@@ -96,7 +102,15 @@ export const CopyToClipboardContainer = React.forwardRef<
             variant="outline"
             size="sm"
             className="my-1 rounded-full"
-            onClick={() => setOpen(true)}
+            onClick={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              setOpen(true);
+            }}
+            onMouseDown={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+            }}
           >
             <Plus className="mr-2 h-4 w-4" /> Show content
           </Button>

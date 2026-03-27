@@ -5,7 +5,7 @@ import { z } from "zod";
 // RFC 5424 Syslog Schema
 export const columnSchema = z.object({
   id: z.number().int().positive(),
-  priority: z.number().min(0).max(191),
+  priority: z.number().min(0).max(191).optional(),
   severity: z.number().min(0).max(7),
   facility: z.number().min(0).max(23),
   timestamp: z.date(),
@@ -14,7 +14,19 @@ export const columnSchema = z.object({
   procId: z.string(),
   msgId: z.string(),
   message: z.string(),
+  format: z.string(),
   structuredData: z.record(z.record(z.string())).optional(),
+  messageFields: z.record(z.string()).optional(),
+  cefVersion: z.string().optional(),
+  cefDeviceVendor: z.string().optional(),
+  cefDeviceProduct: z.string().optional(),
+  cefDeviceVersion: z.string().optional(),
+  cefSignatureId: z.string().optional(),
+  cefName: z.string().optional(),
+  cefSeverity: z.string().optional(),
+  cefExtensions: z.record(z.string()).optional(),
+  cefExt: z.record(z.string()).optional(),
+  msgField: z.record(z.string()).optional(),
 });
 
 export type ColumnSchema = z.infer<typeof columnSchema>;
@@ -40,6 +52,16 @@ export const columnFilterSchema = z.object({
   procId: z.string().optional(),
   msgId: z.string().optional(),
   message: z.string().optional(),
+  format: z.string().optional(),
+  cefVersion: z.string().optional(),
+  cefDeviceVendor: z.string().optional(),
+  cefDeviceProduct: z.string().optional(),
+  cefDeviceVersion: z.string().optional(),
+  cefSignatureId: z.string().optional(),
+  cefName: z.string().optional(),
+  cefSeverity: z.string().optional(),
+  cefExt: z.record(z.string()).optional(),
+  msgField: z.record(z.string()).optional(),
 });
 
 export type ColumnFilterSchema = z.infer<typeof columnFilterSchema>;

@@ -1,6 +1,12 @@
+.git
 .idea
 .pnpm-store/
+
 node_modules/
 **/node_modules/
+
 frontend/.next/
 frontend/out/
+frontend/coverage/
+
+backend/sloggo

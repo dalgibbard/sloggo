@@ -7,6 +7,7 @@ import {
 } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import { TooltipPortal } from "@radix-ui/react-tooltip";
+import { DataTableContext } from "@/components/data-table/data-table-provider";
 
 interface TextWithTooltipProps {
   text: string | number;
@@ -16,8 +17,15 @@ interface TextWithTooltipProps {
 export function TextWithTooltip({ text, className }: TextWithTooltipProps) {
   const [isTruncated, setIsTruncated] = useState<boolean>(false);
   const textRef = useRef<HTMLDivElement>(null);
+  const dataTableContext = React.useContext(DataTableContext);
+  const wrapCells = dataTableContext?.wrapCells ?? false;
 
   useEffect(() => {
+    if (wrapCells) {
+      setIsTruncated(false);
+      return;
+    }
+
     const checkTruncation = () => {
       if (textRef.current) {
         const { scrollWidth, clientWidth } = textRef.current;
@@ -38,17 +46,17 @@ export function TextWithTooltip({ text, className }: TextWithTooltipProps) {
     return () => {
       resizeObserver.disconnect();
     };
-  }, []);
+  }, [wrapCells, text]);
 
   return (
     <TooltipProvider delayDuration={100} disableHoverableContent>
       <Tooltip>
-        <TooltipTrigger disabled={!isTruncated} asChild>
+        <TooltipTrigger disabled={wrapCells || !isTruncated} asChild>
           <div
             ref={textRef}
             className={cn(
-              "truncate",
-              !isTruncated && "pointer-events-none",
+              wrapCells ? "whitespace-pre-wrap break-words" : "truncate",
+              !wrapCells && !isTruncated && "pointer-events-none",
               className
             )}
           >

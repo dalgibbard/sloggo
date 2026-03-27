@@ -56,7 +56,12 @@ export function DataTableSheetContent<TData, TMeta>({
                 </dt>
                 <dd className="font-mono w-full text-right">
                   {Component ? (
-                    <Component {...data} metadata={metadata} />
+                    <Component
+                      {...data}
+                      table={table}
+                      filterFields={filterFields}
+                      metadata={metadata}
+                    />
                   ) : (
                     value
                   )}
@@ -78,7 +83,12 @@ export function DataTableSheetContent<TData, TMeta>({
                 </dt>
                 <dd className="font-mono w-full text-right">
                   {Component ? (
-                    <Component {...data} metadata={metadata} />
+                    <Component
+                      {...data}
+                      table={table}
+                      filterFields={filterFields}
+                      metadata={metadata}
+                    />
                   ) : (
                     value
                   )}

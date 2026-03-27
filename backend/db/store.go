@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"path"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -28,6 +28,8 @@ var (
 	maxBatchStoreLogsSize = 10000
 	cleanupTick           = 30 * time.Minute
 )
+
+const logsTableName = "logs"
 
 // ChartDataPoint represents a single point of log data for charts
 type ChartDataPoint struct {
@@ -58,7 +60,7 @@ func init() {
 	setupDatabase()
 
 	// Initialize schema
-	setupDatabaseTable("logs")
+	setupDatabaseTable()
 
 	batchLogs = make([]models.LogEntry, 0, maxBatchStoreLogsSize)
 
@@ -79,7 +81,7 @@ func setupDatabase() {
 		log.Fatal(err)
 	}
 
-	dsn := filepath.Join(path.Dir(e), ".duckdb/logs.db")
+	dsn := filepath.Join(filepath.Dir(e), ".duckdb", "logs.db")
 
 	if testing.Testing() {
 		dsn = ""
@@ -92,10 +94,11 @@ func setupDatabase() {
 }
 
 // setupDatabaseTable creates a table if it doesn't already exist
-func setupDatabaseTable(table string) {
+func setupDatabaseTable() {
+	ctx := context.Background()
 	query := fmt.Sprintf(`
-	CREATE TABLE IF NOT EXISTS %s (
-	    severity INTEGER NOT NULL,
+		CREATE TABLE IF NOT EXISTS %s (
+		    severity INTEGER NOT NULL,
 	    facility INTEGER NOT NULL,
 	    version INTEGER NOT NULL DEFAULT 1,
 	    timestamp TIMESTAMP NOT NULL,
@@ -104,13 +107,108 @@ func setupDatabaseTable(table string) {
 	    procid TEXT,
 	    msgid TEXT,
 	    structured_data TEXT,
-	    msg TEXT
-	);
-	`, table)
+	    msg TEXT,
+	    message_fields TEXT,
+	    format TEXT NOT NULL DEFAULT 'syslog',
+	    cef_version TEXT,
+	    cef_device_vendor TEXT,
+	    cef_device_product TEXT,
+	    cef_device_version TEXT,
+	    cef_signature_id TEXT,
+	    cef_name TEXT,
+	    cef_severity TEXT,
+	    cef_extensions TEXT
+		);
+		`, logsTableName)
 
-	if _, err := db.Exec(query); err != nil {
-		log.Fatalf("Failed to create table %s: %v", table, err)
+	if _, err := db.ExecContext(ctx, query); err != nil {
+		log.Fatalf("Failed to create table %s: %v", logsTableName, err)
 	}
+
+	if err := ensureLogsTableSchema(); err != nil {
+		log.Fatalf("Failed to migrate table %s: %v", logsTableName, err)
+	}
+}
+
+func ensureLogsTableSchema() error {
+	table := logsTableName
+	ctx := context.Background()
+	existingColumns, err := getTableColumns(table)
+	if err != nil {
+		return err
+	}
+
+	type columnSpec struct {
+		Name          string
+		AddDefinition string
+	}
+
+	requiredColumns := []columnSpec{
+		{Name: "message_fields", AddDefinition: "TEXT"},
+		{Name: "format", AddDefinition: "TEXT"},
+		{Name: "cef_version", AddDefinition: "TEXT"},
+		{Name: "cef_device_vendor", AddDefinition: "TEXT"},
+		{Name: "cef_device_product", AddDefinition: "TEXT"},
+		{Name: "cef_device_version", AddDefinition: "TEXT"},
+		{Name: "cef_signature_id", AddDefinition: "TEXT"},
+		{Name: "cef_name", AddDefinition: "TEXT"},
+		{Name: "cef_severity", AddDefinition: "TEXT"},
+		{Name: "cef_extensions", AddDefinition: "TEXT"},
+	}
+
+	for _, column := range requiredColumns {
+		if slices.Contains(existingColumns, column.Name) {
+			continue
+		}
+
+		query := fmt.Sprintf("ALTER TABLE %s ADD COLUMN %s %s", table, column.Name, column.AddDefinition)
+		if _, err := db.ExecContext(ctx, query); err != nil {
+			return fmt.Errorf("add column %s: %w", column.Name, err)
+		}
+	}
+
+	if _, err := db.ExecContext(ctx, fmt.Sprintf("UPDATE %s SET format = 'syslog' WHERE format IS NULL OR format = ''", table)); err != nil {
+		return fmt.Errorf("backfill format column: %w", err)
+	}
+
+	if err := backfillMessageFields(table); err != nil {
+		return fmt.Errorf("backfill message_fields column: %w", err)
+	}
+
+	if _, err := db.ExecContext(ctx, fmt.Sprintf("UPDATE %s SET message_fields = '' WHERE message_fields IS NULL", table)); err != nil {
+		return fmt.Errorf("normalize message_fields column: %w", err)
+	}
+
+	_, _ = db.ExecContext(ctx, fmt.Sprintf("ALTER TABLE %s ALTER COLUMN format SET DEFAULT 'syslog'", table))
+	_, _ = db.ExecContext(ctx, fmt.Sprintf("ALTER TABLE %s ALTER COLUMN format SET NOT NULL", table))
+
+	return nil
+}
+
+func getTableColumns(table string) ([]string, error) {
+	rows, err := db.QueryContext(context.Background(), fmt.Sprintf("PRAGMA table_info('%s')", table))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	columns := []string{}
+	for rows.Next() {
+		var cid any
+		var name string
+		var columnType any
+		var notNull any
+		var defaultValue any
+		var pk any
+
+		if err := rows.Scan(&cid, &name, &columnType, &notNull, &defaultValue, &pk); err != nil {
+			return nil, err
+		}
+
+		columns = append(columns, name)
+	}
+
+	return columns, rows.Err()
 }
 
 // GetDBInstance returns the initialized DuckDB database instance.
@@ -118,8 +216,27 @@ func GetDBInstance() *sql.DB {
 	return db
 }
 
+func normalizeLogEntry(entry models.LogEntry) models.LogEntry {
+	if entry.Format == "" {
+		entry.Format = "syslog"
+	}
+	if entry.StructuredData == "" {
+		entry.StructuredData = "-"
+	}
+	if entry.MessageFields == "" {
+		entry.MessageFields = utils.EncodeJSONMessageFields(entry.Message)
+	}
+	if entry.Timestamp.IsZero() {
+		entry.Timestamp = time.Now().UTC()
+	}
+
+	return entry
+}
+
 // StoreLog adds a log entry to the batch for efficient processing
 func StoreLog(entry models.LogEntry) error {
+	entry = normalizeLogEntry(entry)
+
 	batchLogsMutex.Lock()
 	batchLogs = append(batchLogs, entry)
 
@@ -162,6 +279,11 @@ func processBatchStoreLogsWithEntries(entries []models.LogEntry) error {
 		return nil
 	}
 
+	columnOrder, err := getTableColumns(logsTableName)
+	if err != nil {
+		return fmt.Errorf("get logs table columns: %w", err)
+	}
+
 	// Get the underlying DuckDB connection from sql.DB
 	dbConn, err := db.Conn(context.Background())
 	if err != nil {
@@ -171,7 +293,11 @@ func processBatchStoreLogsWithEntries(entries []models.LogEntry) error {
 
 	var rawConn driver.Conn
 	err = dbConn.Raw(func(driverConn any) error {
-		rawConn = driverConn.(driver.Conn)
+		conn, ok := driverConn.(driver.Conn)
+		if !ok {
+			return fmt.Errorf("unexpected driver connection type %T", driverConn)
+		}
+		rawConn = conn
 		return nil
 	})
 	if err != nil {
@@ -190,19 +316,14 @@ func processBatchStoreLogsWithEntries(entries []models.LogEntry) error {
 	}()
 
 	// Append each log entry directly from struct fields
-	for i, entry := range entries {
-		if err := appender.AppendRow(
-			entry.Severity,
-			entry.Facility,
-			entry.Version,
-			entry.Timestamp,
-			entry.Hostname,
-			entry.AppName,
-			entry.ProcID,
-			entry.MsgID,
-			entry.StructuredData,
-			entry.Message,
-		); err != nil {
+	for i := range entries {
+		entry := &entries[i]
+		rowValues, err := buildAppenderRowValues(*entry, columnOrder)
+		if err != nil {
+			return fmt.Errorf("build appender row %d: %w", i+1, err)
+		}
+
+		if err := appender.AppendRow(rowValues...); err != nil {
 			log.Printf("Failed to append row %d: %v", i+1, err)
 			return err
 		}
@@ -214,6 +335,42 @@ func processBatchStoreLogsWithEntries(entries []models.LogEntry) error {
 		return err
 	}
 	return nil
+}
+
+func buildAppenderRowValues(entry models.LogEntry, columnOrder []string) ([]driver.Value, error) {
+	valuesByColumn := map[string]driver.Value{
+		"severity":           entry.Severity,
+		"facility":           entry.Facility,
+		"version":            entry.Version,
+		"timestamp":          entry.Timestamp,
+		"hostname":           entry.Hostname,
+		"app_name":           entry.AppName,
+		"procid":             entry.ProcID,
+		"msgid":              entry.MsgID,
+		"structured_data":    entry.StructuredData,
+		"msg":                entry.Message,
+		"message_fields":     entry.MessageFields,
+		"format":             entry.Format,
+		"cef_version":        entry.CEFVersion,
+		"cef_device_vendor":  entry.CEFDeviceVendor,
+		"cef_device_product": entry.CEFDeviceProduct,
+		"cef_device_version": entry.CEFDeviceVersion,
+		"cef_signature_id":   entry.CEFSignatureID,
+		"cef_name":           entry.CEFName,
+		"cef_severity":       entry.CEFSeverity,
+		"cef_extensions":     entry.CEFExtensions,
+	}
+
+	rowValues := make([]driver.Value, 0, len(columnOrder))
+	for _, columnName := range columnOrder {
+		value, ok := valuesByColumn[columnName]
+		if !ok {
+			return nil, fmt.Errorf("unsupported logs column %q", columnName)
+		}
+		rowValues = append(rowValues, value)
+	}
+
+	return rowValues, nil
 }
 
 // processBatchPeriodically processes any pending logs on a timer
@@ -230,12 +387,13 @@ func processBatchPeriodically() {
 
 // cleanupOldLogs deletes logs older than the retention period
 func cleanupOldLogs() error {
+	ctx := context.Background()
 	// Calculate the cutoff timestamp for deletion (current time - retention period)
 	cutoffTime := time.Now().Add(-time.Duration(utils.LogRetentionMinutes) * time.Minute).UTC().Format(time.RFC3339Nano)
 
 	query := "DELETE FROM logs WHERE timestamp < ?"
 
-	result, err := db.Exec(query, cutoffTime)
+	result, err := db.ExecContext(ctx, query, cutoffTime)
 	if err != nil {
 		log.Printf("Failed to delete old logs: %v", err)
 		return err
@@ -265,14 +423,20 @@ func performLogCleanupPeriodically() {
 }
 
 // GetLogs retrieves logs from the database based on filters
-func GetLogs(limit int, cursor time.Time, direction string, filters map[string]any, sortField string, sortOrder string) ([]models.LogEntry, int, int, error) {
+func GetLogs(limit int, cursor time.Time, direction string, filters map[string]any, sortField string, sortOrder string) (entries []models.LogEntry, totalCount int, filterCount int, err error) {
+	ctx := context.Background()
 	// Build query
 	queryBuilder := strings.Builder{}
 	countQueryBuilder := strings.Builder{}
 	filterQueryBuilder := strings.Builder{}
 	args := []any{}
 
-	queryBuilder.WriteString("SELECT rowid, facility, severity, timestamp, hostname, app_name, procid, msgid, structured_data, msg FROM logs ")
+	queryBuilder.WriteString(`SELECT rowid, facility, severity, version, timestamp, hostname, app_name,
+		COALESCE(procid, ''), COALESCE(msgid, ''), COALESCE(structured_data, '-'), COALESCE(msg, ''),
+		COALESCE(message_fields, ''), COALESCE(format, 'syslog'), COALESCE(cef_version, ''),
+		COALESCE(cef_device_vendor, ''), COALESCE(cef_device_product, ''), COALESCE(cef_device_version, ''),
+		COALESCE(cef_signature_id, ''), COALESCE(cef_name, ''), COALESCE(cef_severity, ''),
+		COALESCE(cef_extensions, '') FROM logs `)
 	countQueryBuilder.WriteString("SELECT COUNT(*) FROM logs ")
 
 	whereClause := buildWhereClause(filters, cursor, direction, &args)
@@ -284,30 +448,29 @@ func GetLogs(limit int, cursor time.Time, direction string, filters map[string]a
 	queryBuilder.WriteString(filterQueryBuilder.String())
 	countQueryBuilder.WriteString(filterQueryBuilder.String())
 
-	if sortField != "" && sortOrder != "" {
-		queryBuilder.WriteString(fmt.Sprintf(" ORDER BY %s %s", sortField, sortOrder))
+	if sanitizedSortField := sanitizeSortField(sortField); sanitizedSortField != "" && sortOrder != "" {
+		queryBuilder.WriteString(fmt.Sprintf(" ORDER BY %s %s", sanitizedSortField, sortOrder))
 	} else {
 		queryBuilder.WriteString(" ORDER BY timestamp DESC")
 	}
 
 	queryBuilder.WriteString(fmt.Sprintf(" LIMIT %d", limit))
 
-	rows, err := db.Query(queryBuilder.String(), args...)
+	rows, err := db.QueryContext(ctx, queryBuilder.String(), args...)
 	if err != nil {
-		return nil, 0, 0, fmt.Errorf("error querying logs: %v", err)
+		return nil, 0, 0, fmt.Errorf("error querying logs: %w", err)
 	}
 	defer rows.Close()
 
-	// Execute combined count query to get filtered and total counts
-	var filterCount, totalCount int
-	combinedCountQuery := fmt.Sprintf("SELECT (%s) as filtered_count, (SELECT COUNT(*) FROM logs) as total_count", countQueryBuilder.String())
-	err = db.QueryRow(combinedCountQuery, args...).Scan(&filterCount, &totalCount)
-	if err != nil {
-		return nil, 0, 0, fmt.Errorf("error counting logs: %v", err)
+	if err = db.QueryRowContext(ctx, countQueryBuilder.String(), args...).Scan(&filterCount); err != nil {
+		return nil, 0, 0, fmt.Errorf("error counting filtered logs: %w", err)
+	}
+	if err = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM logs").Scan(&totalCount); err != nil {
+		return nil, 0, 0, fmt.Errorf("error counting total logs: %w", err)
 	}
 
 	// Parse results
-	logs := []models.LogEntry{}
+	entries = make([]models.LogEntry, 0, limit)
 	for rows.Next() {
 		var entry models.LogEntry
 		var timestampStr string
@@ -316,6 +479,7 @@ func GetLogs(limit int, cursor time.Time, direction string, filters map[string]a
 			&entry.RowID,
 			&entry.Facility,
 			&entry.Severity,
+			&entry.Version,
 			&timestampStr,
 			&entry.Hostname,
 			&entry.AppName,
@@ -323,25 +487,40 @@ func GetLogs(limit int, cursor time.Time, direction string, filters map[string]a
 			&entry.MsgID,
 			&entry.StructuredData,
 			&entry.Message,
+			&entry.MessageFields,
+			&entry.Format,
+			&entry.CEFVersion,
+			&entry.CEFDeviceVendor,
+			&entry.CEFDeviceProduct,
+			&entry.CEFDeviceVersion,
+			&entry.CEFSignatureID,
+			&entry.CEFName,
+			&entry.CEFSeverity,
+			&entry.CEFExtensions,
 		)
 		if err != nil {
-			return nil, 0, 0, fmt.Errorf("error scanning log row: %v", err)
+			return nil, 0, 0, fmt.Errorf("error scanning log row: %w", err)
 		}
 
 		// Parse timestamp
 		entry.Timestamp, err = time.Parse(time.RFC3339Nano, timestampStr)
 		if err != nil {
-			return nil, 0, 0, fmt.Errorf("error parsing timestamp: %v", err)
+			return nil, 0, 0, fmt.Errorf("error parsing timestamp: %w", err)
 		}
 
-		logs = append(logs, entry)
+		if entry.Format == "" {
+			entry.Format = "syslog"
+		}
+
+		entries = append(entries, entry)
 	}
 
-	return logs, totalCount, filterCount, nil
+	return entries, totalCount, filterCount, rows.Err()
 }
 
 // GetFacets retrieves facet metadata for filtering
 func GetFacets(filters map[string]any) (map[string]FacetMetadata, error) {
+	ctx := context.Background()
 	// For facets, exclude temporal filters (date range) to show total state
 	// This ensures live mode facets represent all logs, not just new ones
 	facetFilters := make(map[string]any)
@@ -373,10 +552,10 @@ func GetFacets(filters map[string]any) (map[string]FacetMetadata, error) {
 
 		query += " GROUP BY severity"
 
-		rows, err := db.Query(query, args...)
+		rows, err := db.QueryContext(ctx, query, args...)
 		if err != nil {
 			mu.Lock()
-			globalErr = fmt.Errorf("error querying severity facets: %v", err)
+			globalErr = fmt.Errorf("error querying severity facets: %w", err)
 			mu.Unlock()
 			return
 		}
@@ -389,7 +568,7 @@ func GetFacets(filters map[string]any) (map[string]FacetMetadata, error) {
 			err := rows.Scan(&valueStr, &row.Total)
 			if err != nil {
 				mu.Lock()
-				globalErr = fmt.Errorf("error scanning severity facet row: %v", err)
+				globalErr = fmt.Errorf("error scanning severity facet row: %w", err)
 				mu.Unlock()
 				return
 			}
@@ -425,10 +604,10 @@ func GetFacets(filters map[string]any) (map[string]FacetMetadata, error) {
 
 		query += " GROUP BY facility"
 
-		rows, err := db.Query(query, args...)
+		rows, err := db.QueryContext(ctx, query, args...)
 		if err != nil {
 			mu.Lock()
-			globalErr = fmt.Errorf("error querying facility facets: %v", err)
+			globalErr = fmt.Errorf("error querying facility facets: %w", err)
 			mu.Unlock()
 			return
 		}
@@ -441,7 +620,7 @@ func GetFacets(filters map[string]any) (map[string]FacetMetadata, error) {
 			err := rows.Scan(&valueStr, &row.Total)
 			if err != nil {
 				mu.Lock()
-				globalErr = fmt.Errorf("error scanning facility facet row: %v", err)
+				globalErr = fmt.Errorf("error scanning facility facet row: %w", err)
 				mu.Unlock()
 				return
 			}
@@ -476,6 +655,7 @@ func GetFacets(filters map[string]any) (map[string]FacetMetadata, error) {
 
 // GetChartData retrieves time-series data for charts
 func GetChartData(cursor time.Time, filters map[string]any) ([]ChartDataPoint, error) {
+	ctx := context.Background()
 	chartFilters := make(map[string]any)
 	for k, v := range filters {
 		chartFilters[k] = v
@@ -490,8 +670,16 @@ func GetChartData(cursor time.Time, filters map[string]any) ([]ChartDataPoint, e
 		chartFilters["startDate"] = startDate
 	}
 
-	startDate := chartFilters["startDate"].(time.Time)
-	endDate := chartFilters["endDate"].(time.Time)
+	startDate, ok := getTimeFilter(chartFilters["startDate"])
+	if !ok {
+		startDate = cursor.Add(-24 * time.Hour)
+		chartFilters["startDate"] = startDate
+	}
+	endDate, ok := getTimeFilter(chartFilters["endDate"])
+	if !ok {
+		endDate = cursor.Truncate(time.Hour).Add(time.Hour)
+		chartFilters["endDate"] = endDate
+	}
 	duration := endDate.Sub(startDate)
 
 	var truncateUnit string
@@ -536,9 +724,9 @@ func GetChartData(cursor time.Time, filters map[string]any) ([]ChartDataPoint, e
 	queryBuilder.WriteString(fmt.Sprintf(" GROUP BY date_trunc('%s', timestamp) ORDER BY ts ASC", truncateUnit))
 
 	// Execute query
-	rows, err := db.Query(queryBuilder.String(), args...)
+	rows, err := db.QueryContext(ctx, queryBuilder.String(), args...)
 	if err != nil {
-		return nil, fmt.Errorf("error querying chart data: %v", err)
+		return nil, fmt.Errorf("error querying chart data: %w", err)
 	}
 	defer rows.Close()
 
@@ -558,13 +746,123 @@ func GetChartData(cursor time.Time, filters map[string]any) ([]ChartDataPoint, e
 			&point.Emergency,
 		)
 		if err != nil {
-			return nil, fmt.Errorf("error scanning chart data row: %v", err)
+			return nil, fmt.Errorf("error scanning chart data row: %w", err)
 		}
 
 		chartData = append(chartData, point)
 	}
 
 	return chartData, nil
+}
+
+func GetCEFExtensionKeys(filters map[string]any) ([]string, error) {
+	ctx := context.Background()
+	queryBuilder := strings.Builder{}
+	queryBuilder.WriteString(`
+		SELECT DISTINCT ext.key
+		FROM logs, json_each(COALESCE(NULLIF(cef_extensions, ''), '{}')) AS ext
+	`)
+
+	args := []any{}
+	whereClause := buildWhereClause(filters, time.Time{}, "", &args)
+	conditions := []string{"format = 'cef'"}
+	if whereClause != "" {
+		conditions = append(conditions, whereClause)
+	}
+
+	queryBuilder.WriteString(" WHERE ")
+	queryBuilder.WriteString(strings.Join(conditions, " AND "))
+	queryBuilder.WriteString(" ORDER BY ext.key ASC")
+
+	rows, err := db.QueryContext(ctx, queryBuilder.String(), args...)
+	if err != nil {
+		return nil, fmt.Errorf("error querying cef extension keys: %w", err)
+	}
+	defer rows.Close()
+
+	keys := []string{}
+	for rows.Next() {
+		var key string
+		if err := rows.Scan(&key); err != nil {
+			return nil, fmt.Errorf("error scanning cef extension key: %w", err)
+		}
+		keys = append(keys, key)
+	}
+
+	return keys, rows.Err()
+}
+
+func GetMessageFieldKeys(filters map[string]any) ([]string, error) {
+	ctx := context.Background()
+	queryBuilder := strings.Builder{}
+	queryBuilder.WriteString(`
+		SELECT DISTINCT field.key
+		FROM logs, json_each(COALESCE(NULLIF(message_fields, ''), '{}')) AS field
+	`)
+
+	args := []any{}
+	whereClause := buildWhereClause(filters, time.Time{}, "", &args)
+	if whereClause != "" {
+		queryBuilder.WriteString(" WHERE ")
+		queryBuilder.WriteString(whereClause)
+	}
+	queryBuilder.WriteString(" ORDER BY field.key ASC")
+
+	rows, err := db.QueryContext(ctx, queryBuilder.String(), args...)
+	if err != nil {
+		return nil, fmt.Errorf("error querying message field keys: %w", err)
+	}
+	defer rows.Close()
+
+	keys := []string{}
+	for rows.Next() {
+		var key string
+		if err := rows.Scan(&key); err != nil {
+			return nil, fmt.Errorf("error scanning message field key: %w", err)
+		}
+		keys = append(keys, key)
+	}
+
+	return keys, rows.Err()
+}
+
+func sanitizeSortField(sortField string) string {
+	switch sortField {
+	case "timestamp":
+		return "timestamp"
+	case "severity":
+		return "severity"
+	case "facility":
+		return "facility"
+	case "hostname":
+		return "hostname"
+	case "appName":
+		return "app_name"
+	case "procId":
+		return "procid"
+	case "msgId":
+		return "msgid"
+	case "message":
+		return "msg"
+	case "format":
+		return "format"
+	case "cefVersion":
+		return "cef_version"
+	case "cefDeviceVendor":
+		return "cef_device_vendor"
+	case "cefDeviceProduct":
+		return "cef_device_product"
+	case "cefDeviceVersion":
+		return "cef_device_version"
+	case "cefSignatureId":
+		return "cef_signature_id"
+	case "cefName":
+		return "cef_name"
+	case "cefSeverity":
+		return "cef_severity"
+	default:
+		return ""
+	}
 }
 
 // Helper function to build WHERE clause from filters
@@ -579,7 +877,10 @@ func buildWhereClause(filters map[string]any, cursor time.Time, direction string
 	for key, value := range filters {
 		switch key {
 		case "severity":
-			severities := value.([]int)
+			severities, ok := getIntSliceFilter(value)
+			if !ok {
+				continue
+			}
 			if len(severities) > 0 {
 				placeholders := make([]string, len(severities))
 				for i, s := range severities {
@@ -589,7 +890,10 @@ func buildWhereClause(filters map[string]any, cursor time.Time, direction string
 				conditions = append(conditions, fmt.Sprintf("severity IN (%s)", strings.Join(placeholders, ",")))
 			}
 		case "facility":
-			facilities := value.([]int)
+			facilities, ok := getIntSliceFilter(value)
+			if !ok {
+				continue
+			}
 
 			if len(facilities) > 0 {
 				placeholders := make([]string, len(facilities))
@@ -600,23 +904,123 @@ func buildWhereClause(filters map[string]any, cursor time.Time, direction string
 				conditions = append(conditions, fmt.Sprintf("facility IN (%s)", strings.Join(placeholders, ",")))
 			}
 		case "hostname":
-			conditions = append(conditions, "hostname = ?")
-			*args = append(*args, value.(string))
+			condition, ok := buildStringCondition("hostname", value, args)
+			if !ok {
+				continue
+			}
+			conditions = append(conditions, condition)
 		case "procId":
-			conditions = append(conditions, "procid = ?")
-			*args = append(*args, value.(string))
+			condition, ok := buildStringCondition("procid", value, args)
+			if !ok {
+				continue
+			}
+			conditions = append(conditions, condition)
 		case "appName":
-			conditions = append(conditions, "app_name = ?")
-			*args = append(*args, value.(string))
+			condition, ok := buildStringCondition("app_name", value, args)
+			if !ok {
+				continue
+			}
+			conditions = append(conditions, condition)
 		case "msgId":
-			conditions = append(conditions, "msgid = ?")
-			*args = append(*args, value.(string))
+			condition, ok := buildStringCondition("msgid", value, args)
+			if !ok {
+				continue
+			}
+			conditions = append(conditions, condition)
+		case "message":
+			condition, ok := buildStringCondition("msg", value, args, stringConditionOptions{
+				PartialByDefault: true,
+			})
+			if !ok {
+				continue
+			}
+			conditions = append(conditions, condition)
+		case "format":
+			condition, ok := buildStringCondition("format", value, args)
+			if !ok {
+				continue
+			}
+			conditions = append(conditions, condition)
+		case "cefVersion":
+			condition, ok := buildStringCondition("cef_version", value, args)
+			if !ok {
+				continue
+			}
+			conditions = append(conditions, condition)
+		case "cefDeviceVendor":
+			condition, ok := buildStringCondition("cef_device_vendor", value, args)
+			if !ok {
+				continue
+			}
+			conditions = append(conditions, condition)
+		case "cefDeviceProduct":
+			condition, ok := buildStringCondition("cef_device_product", value, args)
+			if !ok {
+				continue
+			}
+			conditions = append(conditions, condition)
+		case "cefDeviceVersion":
+			condition, ok := buildStringCondition("cef_device_version", value, args)
+			if !ok {
+				continue
+			}
+			conditions = append(conditions, condition)
+		case "cefSignatureId":
+			condition, ok := buildStringCondition("cef_signature_id", value, args)
+			if !ok {
+				continue
+			}
+			conditions = append(conditions, condition)
+		case "cefName":
+			condition, ok := buildStringCondition("cef_name", value, args)
+			if !ok {
+				continue
+			}
+			conditions = append(conditions, condition)
+		case "cefSeverity":
+			condition, ok := buildStringCondition("cef_severity", value, args)
+			if !ok {
+				continue
+			}
+			conditions = append(conditions, condition)
+		case "cefExt":
+			extensionFilters, ok := getCEFExtensionFilters(value)
+			if !ok {
+				continue
+			}
+			for key, extValue := range extensionFilters {
+				condition, ok := buildJSONMapCondition("cef_extensions", key, extValue, args)
+				if !ok {
+					continue
+				}
+				conditions = append(conditions, condition)
+			}
+		case "msgField":
+			messageFieldFilters, ok := getStringMapFilter(value)
+			if !ok {
+				continue
+			}
+			for key, fieldValue := range messageFieldFilters {
+				condition, ok := buildJSONMapCondition("message_fields", key, fieldValue, args)
+				if !ok {
+					continue
+				}
+				conditions = append(conditions, condition)
+			}
 		case "startDate":
+			filterValue, ok := getTimeFilter(value)
+			if !ok {
+				continue
+			}
 			conditions = append(conditions, "timestamp >= ?")
-			*args = append(*args, value.(time.Time).Format(time.RFC3339Nano))
+			*args = append(*args, filterValue.Format(time.RFC3339Nano))
 		case "endDate":
+			filterValue, ok := getTimeFilter(value)
+			if !ok {
+				continue
+			}
 			conditions = append(conditions, "timestamp <= ?")
-			*args = append(*args, value.(time.Time).Format(time.RFC3339Nano))
+			*args = append(*args, filterValue.Format(time.RFC3339Nano))
 		}
 	}
 
@@ -630,4 +1034,245 @@ func buildWhereClause(filters map[string]any, cursor time.Time, direction string
 	}
 
 	return strings.Join(conditions, " AND ")
+}
+
+func buildCEFJSONPath(key string) string {
+	key = strings.ReplaceAll(key, `\`, `\\`)
+	key = strings.ReplaceAll(key, `"`, `\"`)
+	return fmt.Sprintf(`$.%q`, key)
+}
+
+func getStringFilters(value any) ([]string, bool) {
+	switch filterValue := value.(type) {
+	case string:
+		if filterValue == "" {
+			return nil, false
+		}
+		return []string{filterValue}, true
+	case []string:
+		normalizedValues := make([]string, 0, len(filterValue))
+		for _, entry := range filterValue {
+			if entry != "" {
+				normalizedValues = append(normalizedValues, entry)
+			}
+		}
+		if len(normalizedValues) == 0 {
+			return nil, false
+		}
+		return normalizedValues, true
+	default:
+		return nil, false
+	}
+}
+
+type stringConditionOptions struct {
+	PartialByDefault bool
+}
+
+func buildStringCondition(column string, value any, args *[]any, options ...stringConditionOptions) (string, bool) {
+	filterValues, ok := getStringFilters(value)
+	if !ok || len(filterValues) == 0 {
+		return "", false
+	}
+
+	settings := stringConditionOptions{}
+	if len(options) > 0 {
+		settings = options[0]
+	}
+
+	includeConditions := make([]string, 0, len(filterValues))
+	excludeRawValues := make([]string, 0, len(filterValues))
+	includeRawValues := make([]string, 0, len(filterValues))
+
+	for _, filterValue := range filterValues {
+		exclude := strings.HasPrefix(filterValue, "!")
+		rawValue := strings.TrimPrefix(filterValue, "!")
+		if rawValue == "" {
+			continue
+		}
+
+		if exclude {
+			excludeRawValues = append(excludeRawValues, rawValue)
+			continue
+		}
+
+		includeRawValues = append(includeRawValues, rawValue)
+	}
+
+	excludeConditions := make([]string, 0, len(excludeRawValues))
+
+	for _, rawValue := range includeRawValues {
+		condition, ok := buildSingleStringCondition(column, rawValue, false, settings, args)
+		if ok {
+			includeConditions = append(includeConditions, condition)
+		}
+	}
+
+	for _, rawValue := range excludeRawValues {
+		condition, ok := buildSingleStringCondition(column, rawValue, true, settings, args)
+		if ok {
+			excludeConditions = append(excludeConditions, condition)
+		}
+	}
+
+	if len(includeConditions) == 0 && len(excludeConditions) == 0 {
+		return "", false
+	}
+
+	conditions := make([]string, 0, 1+len(excludeConditions))
+	if len(includeConditions) == 1 {
+		conditions = append(conditions, includeConditions[0])
+	} else if len(includeConditions) > 1 {
+		conditions = append(conditions, fmt.Sprintf("(%s)", strings.Join(includeConditions, " OR ")))
+	}
+
+	conditions = append(conditions, excludeConditions...)
+	return strings.Join(conditions, " AND "), true
+}
+
+func buildSingleStringCondition(
+	column string,
+	rawValue string,
+	exclude bool,
+	settings stringConditionOptions,
+	args *[]any,
+) (string, bool) {
+	if settings.PartialByDefault || strings.Contains(rawValue, "*") {
+		pattern := buildLikePattern(rawValue, settings.PartialByDefault)
+		if pattern == "" {
+			return "", false
+		}
+
+		*args = append(*args, pattern)
+		if exclude {
+			return fmt.Sprintf("NOT (LOWER(COALESCE(%s, '')) LIKE LOWER(?) ESCAPE '\\')", column), true
+		}
+		return fmt.Sprintf("LOWER(COALESCE(%s, '')) LIKE LOWER(?) ESCAPE '\\'", column), true
+	}
+
+	*args = append(*args, rawValue)
+	if exclude {
+		return fmt.Sprintf("%s IS DISTINCT FROM ?", column), true
+	}
+
+	return fmt.Sprintf("%s = ?", column), true
+}
+
+func buildLikePattern(value string, partialByDefault bool) string {
+	var patternBuilder strings.Builder
+	if partialByDefault && !strings.Contains(value, "*") {
+		patternBuilder.WriteString("%")
+	}
+
+	for _, char := range value {
+		switch char {
+		case '*':
+			patternBuilder.WriteString("%")
+		case '%', '_', '\\':
+			patternBuilder.WriteString(`\`)
+			patternBuilder.WriteRune(char)
+		default:
+			patternBuilder.WriteRune(char)
+		}
+	}
+
+	if partialByDefault && !strings.Contains(value, "*") {
+		patternBuilder.WriteString("%")
+	}
+
+	return patternBuilder.String()
+}
+
+func buildJSONMapCondition(column string, key string, value string, args *[]any) (string, bool) {
+	if key == "" || value == "" {
+		return "", false
+	}
+
+	exclude := strings.HasPrefix(value, "!")
+	rawValue := strings.TrimPrefix(value, "!")
+	if rawValue == "" {
+		return "", false
+	}
+
+	expression := fmt.Sprintf("COALESCE(json_extract_string(COALESCE(NULLIF(%s, ''), '{}'), ?), '')", column)
+	*args = append(*args, buildCEFJSONPath(key))
+
+	if strings.Contains(rawValue, "*") {
+		*args = append(*args, buildLikePattern(rawValue, false))
+		if exclude {
+			return fmt.Sprintf("NOT (LOWER(%s) LIKE LOWER(?) ESCAPE '\\')", expression), true
+		}
+		return fmt.Sprintf("LOWER(%s) LIKE LOWER(?) ESCAPE '\\'", expression), true
+	}
+
+	*args = append(*args, rawValue)
+	if exclude {
+		return fmt.Sprintf("%s IS DISTINCT FROM ?", expression), true
+	}
+	return fmt.Sprintf("%s = ?", expression), true
+}
+
+func getIntSliceFilter(value any) ([]int, bool) {
+	filterValue, ok := value.([]int)
+	return filterValue, ok
+}
+
+func getTimeFilter(value any) (time.Time, bool) {
+	filterValue, ok := value.(time.Time)
+	return filterValue, ok
+}
+
+func getCEFExtensionFilters(value any) (map[string]string, bool) {
+	return getStringMapFilter(value)
+}
+
+func getStringMapFilter(value any) (map[string]string, bool) {
+	filterValue, ok := value.(map[string]string)
+	return filterValue, ok
+}
+
+func backfillMessageFields(table string) error {
+	ctx := context.Background()
+	rows, err := db.QueryContext(ctx, fmt.Sprintf("SELECT rowid, msg FROM %s WHERE msg IS NOT NULL AND msg != '' AND (message_fields IS NULL OR message_fields = '')", table))
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+
+	tx, err := db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		_ = tx.Rollback()
+	}()
+
+	stmt, err := tx.PrepareContext(ctx, fmt.Sprintf("UPDATE %s SET message_fields = ? WHERE rowid = ?", table))
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
+
+	for rows.Next() {
+		var rowID int64
+		var message string
+		if err := rows.Scan(&rowID, &message); err != nil {
+			return err
+		}
+
+		messageFields := utils.EncodeJSONMessageFields(message)
+		if messageFields == "" {
+			continue
+		}
+
+		if _, err := stmt.ExecContext(ctx, messageFields, rowID); err != nil {
+			return err
+		}
+	}
+
+	if err := rows.Err(); err != nil {
+		return err
+	}
+
+	return tx.Commit()
 }

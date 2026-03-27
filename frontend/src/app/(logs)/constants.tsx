@@ -1,6 +1,7 @@
 "use client";
 
 import { CopyToClipboardContainer } from "@/components/custom/copy-to-clipboard-container";
+import { KVTable } from "@/components/custom/kv-table";
 import { KVTabs } from "@/components/custom/kv-tabs";
 import type {
   DataTableFilterField,
@@ -11,8 +12,35 @@ import { SEVERITY_LABELS, SEVERITY_VALUES } from "@/constants/severity";
 import { getSeverityColor } from "@/lib/request/severity";
 import { cn } from "@/lib/utils";
 import { format } from "date-fns";
-import type { SyslogMeta } from "./query-options";
+import { parseCEFExtensionFilters, serializeCEFExtensionFilters } from "./cef";
+import {
+  parseMessageFieldFilters,
+  serializeMessageFieldFilters,
+} from "./message-fields";
+import type { LogsMeta } from "./query-options";
 import { type ColumnSchema } from "./schema";
+
+export const CEF_FILTER_FIELD_IDS = [
+  "cefVersion",
+  "cefDeviceVendor",
+  "cefDeviceProduct",
+  "cefDeviceVersion",
+  "cefSignatureId",
+  "cefName",
+  "cefSeverity",
+  "cefExt",
+] as const;
+
+export const CEF_SHEET_FIELD_IDS = [
+  "cefVersion",
+  "cefDeviceVendor",
+  "cefDeviceProduct",
+  "cefDeviceVersion",
+  "cefSignatureId",
+  "cefName",
+  "cefSeverity",
+  "cefExtensions",
+] as const;
 
 // Syslog facility names
 const SYSLOG_FACILITIES = [
@@ -107,6 +135,71 @@ export const filterFields = [
     value: "msgId",
     type: "input",
   },
+  {
+    label: "Message",
+    value: "message",
+    type: "input",
+    placeholder: "not found",
+  },
+  {
+    label: "Format",
+    value: "format",
+    type: "input",
+    placeholder: "cef",
+  },
+  {
+    label: "CEF Version",
+    value: "cefVersion",
+    type: "input",
+  },
+  {
+    label: "CEF Vendor",
+    value: "cefDeviceVendor",
+    type: "input",
+  },
+  {
+    label: "CEF Product",
+    value: "cefDeviceProduct",
+    type: "input",
+  },
+  {
+    label: "CEF Device Version",
+    value: "cefDeviceVersion",
+    type: "input",
+  },
+  {
+    label: "CEF Signature ID",
+    value: "cefSignatureId",
+    type: "input",
+  },
+  {
+    label: "CEF Name",
+    value: "cefName",
+    type: "input",
+  },
+  {
+    label: "CEF Severity",
+    value: "cefSeverity",
+    type: "input",
+  },
+  {
+    label: "CEF Extensions",
+    value: "cefExt",
+    type: "input",
+    commandDisabled: true,
+    placeholder: "src=10.0.0.1; proto=udp",
+    parseInput: parseCEFExtensionFilters,
+    serializeInput: serializeCEFExtensionFilters,
+  },
+  {
+    label: "Message Fields",
+    value: "msgField",
+    type: "input",
+    commandDisabled: true,
+    placeholder: "type=dnsAdBlock; protocol=udp",
+    parseInput: parseMessageFieldFilters,
+    serializeInput: serializeMessageFieldFilters,
+  },
 ] satisfies DataTableFilterField<ColumnSchema>[];
 
 export const sheetFields = [
@@ -179,6 +272,12 @@ export const sheetFields = [
     skeletonClassName: "w-24",
   },
   {
+    id: "format",
+    label: "Format",
+    type: "input",
+    skeletonClassName: "w-16",
+  },
+  {
     id: "appName",
     label: "App Name",
     type: "input",
@@ -219,12 +318,96 @@ export const sheetFields = [
     className: "flex-col items-start w-full gap-1",
   },
   {
+    id: "cefVersion",
+    label: "CEF Version",
+    type: "input",
+    condition: (props) => props.format === "cef" && !!props.cefVersion,
+    skeletonClassName: "w-12",
+  },
+  {
+    id: "cefDeviceVendor",
+    label: "CEF Vendor",
+    type: "input",
+    condition: (props) => props.format === "cef" && !!props.cefDeviceVendor,
+    skeletonClassName: "w-24",
+  },
+  {
+    id: "cefDeviceProduct",
+    label: "CEF Product",
+    type: "input",
+    condition: (props) => props.format === "cef" && !!props.cefDeviceProduct,
+    skeletonClassName: "w-24",
+  },
+  {
+    id: "cefDeviceVersion",
+    label: "CEF Device Version",
+    type: "input",
+    condition: (props) => props.format === "cef" && !!props.cefDeviceVersion,
+    skeletonClassName: "w-16",
+  },
+  {
+    id: "cefSignatureId",
+    label: "CEF Signature ID",
+    type: "input",
+    condition: (props) => props.format === "cef" && !!props.cefSignatureId,
+    skeletonClassName: "w-20",
+  },
+  {
+    id: "cefName",
+    label: "CEF Name",
+    type: "input",
+    condition: (props) => props.format === "cef" && !!props.cefName,
+    skeletonClassName: "w-28",
+  },
+  {
+    id: "cefSeverity",
+    label: "CEF Severity",
+    type: "input",
+    condition: (props) => props.format === "cef" && !!props.cefSeverity,
+    skeletonClassName: "w-12",
+  },
+  {
+    id: "cefExtensions",
+    label: "CEF Extensions",
+    type: "readonly",
+    condition: (props) =>
+      props.format === "cef" &&
+      props.cefExtensions !== undefined &&
+      Object.keys(props.cefExtensions).length > 0,
+    component: (props) => (
+      <KVTable
+        data={props.cefExtensions || {}}
+        fieldValue="cefExt"
+        table={props.table}
+        filterFields={props.filterFields}
+      />
+    ),
+    className: "flex-col items-start w-full gap-1",
+  },
+  {
+    id: "messageFields",
+    label: "Message Fields",
+    type: "readonly",
+    condition: (props) =>
+      props.messageFields !== undefined &&
+      Object.keys(props.messageFields).length > 0,
+    component: (props) => (
+      <KVTable
+        data={props.messageFields || {}}
+        fieldValue="msgField"
+        table={props.table}
+        filterFields={props.filterFields}
+      />
+    ),
+    className: "flex-col items-start w-full gap-1",
+  },
+  {
     id: "message",
     label: "Message",
-    type: "readonly",
+    type: "input",
     component: (props) => (
       <CopyToClipboardContainer>{props.message}</CopyToClipboardContainer>
     ),
     className: "flex-col items-start w-full gap-1",
   },
-] satisfies SheetField<ColumnSchema, SyslogMeta>[];
+] satisfies SheetField<ColumnSchema, LogsMeta>[];

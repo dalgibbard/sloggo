@@ -1,6 +1,6 @@
 "use client";
 
-import { Kbd } from "@/components/custom/kbd";
+import { HotkeyKbd } from "@/components/custom/hotkey-kbd";
 import { useDataTable } from "@/components/data-table/data-table-provider";
 import { Button } from "@/components/ui/button";
 import {
@@ -9,11 +9,11 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
+import { HOTKEYS } from "@/constants/hotkeys";
 import { useHotKey } from "@/hooks/use-hot-key";
 import { formatCompactNumber } from "@/lib/format";
 import { useControls } from "@/providers/controls";
 import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
-import { useMemo } from "react";
 import { DataTableFilterControlsDrawer } from "./data-table-filter-controls-drawer";
 import { DataTableResetButton } from "./data-table-reset-button";
 import { DataTableViewOptions } from "./data-table-view-options";
@@ -23,18 +23,15 @@ interface DataTableToolbarProps {
 }
 
 export function DataTableToolbar({ renderActions }: DataTableToolbarProps) {
-  const { table, isLoading, columnFilters } = useDataTable();
+  const { table } = useDataTable();
   const { open, setOpen } = useControls();
-  useHotKey(() => setOpen((prev) => !prev), "b");
+  useHotKey(() => setOpen((prev) => !prev), HOTKEYS.toggleControls);
   const filters = table.getState().columnFilters;
 
-  const rows = useMemo(
-    () => ({
-      total: table.getCoreRowModel().rows.length,
-      filtered: table.getFilteredRowModel().rows.length,
-    }),
-    [isLoading, columnFilters],
-  );
+  const rows = {
+    total: table.getCoreRowModel().rows.length,
+    filtered: table.getFilteredRowModel().rows.length,
+  };
 
   return (
     <div className="flex flex-wrap items-center justify-between gap-4">
@@ -63,11 +60,12 @@ export function DataTableToolbar({ renderActions }: DataTableToolbarProps) {
             </TooltipTrigger>
             <TooltipContent side="right">
               <p>
-                Toggle controls with{" "}
-                <Kbd className="ml-1 text-muted-foreground group-hover:text-accent-foreground">
-                  <span className="mr-1">⌘</span>
-                  <span>B</span>
-                </Kbd>
+                Toggle controls with
+                <HotkeyKbd
+                  keys={HOTKEYS.toggleControls.keys}
+                  className="ml-1"
+                  kbdClassName="text-muted-foreground group-hover:text-accent-foreground"
+                />
               </p>
             </TooltipContent>
           </Tooltip>
@@ -97,8 +95,7 @@ export function DataTableToolbar({ renderActions }: DataTableToolbarProps) {
       <div className="ml-auto flex items-center gap-2">
         {filters.length ? <DataTableResetButton /> : null}
         {renderActions?.()}
-        {/* Reordering columns messes with the table, fix later */}
-        {/*<DataTableViewOptions />*/}
+        <DataTableViewOptions />
       </div>
     </div>
   );

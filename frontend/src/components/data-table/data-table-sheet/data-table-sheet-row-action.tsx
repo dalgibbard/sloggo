@@ -1,58 +1,53 @@
-import { DropdownMenu } from "@/components/ui/dropdown-menu";
-
-import { Copy } from "lucide-react";
-
 import {
+  DropdownMenu,
   DropdownMenuContent,
-  DropdownMenuSeparator,
-} from "@/components/ui/dropdown-menu";
-
-import {
   DropdownMenuGroup,
   DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-
-import { DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
+import { cn } from "@/lib/utils";
+import { Table } from "@tanstack/react-table";
+import { endOfDay, endOfHour, startOfDay, startOfHour } from "date-fns";
 import {
+  CalendarClock,
+  CalendarDays,
   CalendarSearch,
   ChevronLeft,
   ChevronRight,
+  Copy,
   Equal,
   Search,
+  X,
 } from "lucide-react";
-import { CalendarDays } from "lucide-react";
-import { startOfDay } from "date-fns";
-import { startOfHour } from "date-fns";
-import { useCopyToClipboard } from "@/hooks/use-copy-to-clipboard";
-import { endOfDay } from "date-fns";
-import { Table } from "@tanstack/react-table";
-import { CalendarClock } from "lucide-react";
-import { endOfHour } from "date-fns";
-import { cn } from "@/lib/utils";
 import { DataTableFilterField } from "../types";
 
 interface DataTableSheetRowActionProps<
   TData,
-  TFields extends DataTableFilterField<TData>
-> extends React.ComponentPropsWithRef<typeof DropdownMenuTrigger> {
+  TFields extends DataTableFilterField<TData>,
+> extends Omit<React.ComponentPropsWithRef<typeof DropdownMenuTrigger>, "value"> {
   fieldValue: TFields["value"];
   filterFields: TFields[];
-  value: string | number;
+  value: string | number | boolean;
+  objectFilterKey?: string;
   table: Table<TData>;
 }
 
 export function DataTableSheetRowAction<
   TData,
-  TFields extends DataTableFilterField<TData>
+  TFields extends DataTableFilterField<TData>,
 >({
   fieldValue,
   filterFields,
   value,
+  objectFilterKey,
   children,
   className,
   table,
   onKeyDown,
-  ...props
+  asChild = false,
+  disabled,
 }: DataTableSheetRowActionProps<TData, TFields>) {
   const { copy, isCopied } = useCopyToClipboard();
   const field = filterFields.find((field) => field.value === fieldValue);
@@ -84,10 +79,54 @@ export function DataTableSheetRowAction<
         );
       case "input":
         return (
-          <DropdownMenuItem onClick={() => column?.setFilterValue(value)}>
-            <Search />
-            Include
-          </DropdownMenuItem>
+          <DropdownMenuGroup>
+            <DropdownMenuItem
+              onClick={() => {
+                if (objectFilterKey) {
+                  const currentValue = column?.getFilterValue();
+                  const nextValue =
+                    currentValue &&
+                    typeof currentValue === "object" &&
+                    !Array.isArray(currentValue)
+                      ? { ...(currentValue as Record<string, string>) }
+                      : {};
+                  nextValue[objectFilterKey] = String(value);
+                  column?.setFilterValue(nextValue);
+                  return;
+                }
+
+                column?.setFilterValue((currentValue: unknown) =>
+                  appendStringFilterValue(currentValue, String(value)),
+                );
+              }}
+            >
+              <Search />
+              Include
+            </DropdownMenuItem>
+            <DropdownMenuItem
+              onClick={() => {
+                if (objectFilterKey) {
+                  const currentValue = column?.getFilterValue();
+                  const nextValue =
+                    currentValue &&
+                    typeof currentValue === "object" &&
+                    !Array.isArray(currentValue)
+                      ? { ...(currentValue as Record<string, string>) }
+                      : {};
+                  nextValue[objectFilterKey] = `!${String(value)}`;
+                  column?.setFilterValue(nextValue);
+                  return;
+                }
+
+                column?.setFilterValue((currentValue: unknown) =>
+                  appendStringFilterValue(currentValue, `!${String(value)}`),
+                );
+              }}
+            >
+              <X />
+              Exclude
+            </DropdownMenuItem>
+          </DropdownMenuGroup>
         );
       case "slider":
         return (
@@ -113,7 +152,7 @@ export function DataTableSheetRowAction<
           </DropdownMenuGroup>
         );
       case "timerange":
-        const date = new Date(value);
+        const date = new Date(value as string | number);
         return (
           <DropdownMenuGroup>
             <DropdownMenuItem onClick={() => column?.setFilterValue([date])}>
@@ -150,28 +189,44 @@ export function DataTableSheetRowAction<
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
-        className={cn(
-          "rounded-md ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
-          "relative",
-          className
-        )}
-        onKeyDown={(e) => {
-          if (e.key === "ArrowDown") {
-            // REMINDER: default behavior is to open the dropdown menu
-            // But because we use it to navigate between rows, we need to prevent it
-            // and only use "Enter" to select the option
-            e.preventDefault();
-          }
-          onKeyDown?.(e);
-        }}
-        {...props}
+        asChild
       >
-        {children}
-        {isCopied ? (
-          <div className="absolute inset-0 bg-background/70 place-content-center">
-            Value copied
+        {asChild ? (
+          children
+        ) : (
+          <div
+            role="button"
+            tabIndex={disabled ? -1 : 0}
+            aria-disabled={disabled}
+            data-disabled={disabled ? "" : undefined}
+            className={cn(
+              "rounded-md ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2",
+              disabled && "pointer-events-none opacity-50",
+              "relative",
+              className,
+            )}
+            onKeyDown={(e) => {
+              if (e.key === "ArrowDown") {
+                // REMINDER: default behavior is to open the dropdown menu
+                // But because we use it to navigate between rows, we need to prevent it
+                // and only use "Enter" to select the option
+                e.preventDefault();
+              }
+              (
+                onKeyDown as
+                  | React.KeyboardEventHandler<HTMLDivElement>
+                  | undefined
+              )?.(e);
+            }}
+          >
+            {children}
+            {isCopied ? (
+              <div className="absolute inset-0 place-content-center bg-background/70">
+                Value copied
+              </div>
+            ) : null}
           </div>
-        ) : null}
+        )}
       </DropdownMenuTrigger>
       <DropdownMenuContent align="start" side="left">
         {renderOptions()}
@@ -185,4 +240,22 @@ export function DataTableSheetRowAction<
       </DropdownMenuContent>
     </DropdownMenu>
   );
+}
+
+function appendStringFilterValue(
+  currentValue: unknown,
+  nextValue: string,
+): string | string[] {
+  const currentValues = Array.isArray(currentValue)
+    ? currentValue.filter((value): value is string => typeof value === "string")
+    : typeof currentValue === "string"
+      ? [currentValue]
+      : [];
+
+  if (currentValues.includes(nextValue)) {
+    return currentValues.length === 1 ? currentValues[0] : currentValues;
+  }
+
+  const combinedValues = [...currentValues, nextValue];
+  return combinedValues.length === 1 ? combinedValues[0] : combinedValues;
 }

@@ -14,66 +14,67 @@ import { DataTableProvider } from "@/components/data-table/data-table-provider";
 import { DataTableResetButton } from "@/components/data-table/data-table-reset-button";
 import { MemoizedDataTableSheetContent } from "@/components/data-table/data-table-sheet/data-table-sheet-content";
 import { DataTableSheetDetails } from "@/components/data-table/data-table-sheet/data-table-sheet-details";
-import { DataTableToolbar } from "@/components/data-table/data-table-toolbar"; // TODO: check where to put this
+import { DataTableToolbar } from "@/components/data-table/data-table-toolbar";
 import type {
   DataTableFilterField,
   SheetField,
 } from "@/components/data-table/types";
 import { Button } from "@/components/ui/button";
+import { HOTKEYS } from "@/constants/hotkeys";
 import { useHotKey } from "@/hooks/use-hot-key";
 import { useLocalStorage } from "@/hooks/use-local-storage";
 import { formatCompactNumber } from "@/lib/format";
-import { arrSome, inDateRange } from "@/lib/table/filterfns";
+import {
+  arrSome,
+  inDateRange,
+  matchCEFExtensions,
+} from "@/lib/table/filterfns";
 import { cn } from "@/lib/utils";
 import {
-  FetchPreviousPageOptions,
-  RefetchOptions,
   type FetchNextPageOptions,
+  type RefetchOptions,
 } from "@tanstack/react-query";
 import type {
   ColumnDef,
   ColumnFiltersState,
+  OnChangeFn,
   Row,
-  RowSelectionState,
   SortingState,
-  TableOptions,
   Table as TTable,
+  TableOptions,
   VisibilityState,
 } from "@tanstack/react-table";
 import {
   flexRender,
   getCoreRowModel,
   getFacetedRowModel,
-  getFilteredRowModel,
-  getSortedRowModel,
   getFacetedMinMaxValues as getTTableFacetedMinMaxValues,
   getFacetedUniqueValues as getTTableFacetedUniqueValues,
+  getFilteredRowModel,
+  getSortedRowModel,
   useReactTable,
 } from "@tanstack/react-table";
 import { LoaderCircle } from "lucide-react";
-import { useQueryState, useQueryStates, type ParserBuilder } from "nuqs";
 import * as React from "react";
-import { LiveButton } from "./_components/live-button";
-import { RefreshButton } from "./_components/refresh-button";
+import type { ParserBuilder } from "nuqs";
 import { SocialsFooter } from "./_components/socials-footer";
 import { BaseChartSchema } from "./schema";
-import { searchParamsParser } from "./search-params";
 import { TimelineChart } from "./timeline-chart";
 
-// TODO: add a possible chartGroupBy
 export interface DataTableInfiniteProps<TData, TValue, TMeta> {
   columns: ColumnDef<TData, TValue>[];
   getRowClassName?: (row: Row<TData>) => string;
-  // REMINDER: make sure to pass the correct id to access the rows
   getRowId?: TableOptions<TData>["getRowId"];
   data: TData[];
-  defaultColumnFilters?: ColumnFiltersState;
-  defaultColumnSorting?: SortingState;
-  defaultRowSelection?: RowSelectionState;
+  columnFilters: ColumnFiltersState;
+  onColumnFiltersChange: OnChangeFn<ColumnFiltersState>;
+  sorting: SortingState;
+  onSortingChange: OnChangeFn<SortingState>;
+  selectedRowId: string | null;
+  onSelectedRowChange: (rowId: string | null) => void;
   defaultColumnVisibility?: VisibilityState;
   filterFields?: DataTableFilterField<TData>[];
   sheetFields?: SheetField<TData, TMeta>[];
-  // REMINDER: close to the same signature as the `getFacetedUniqueValues` of the `useReactTable`
   getFacetedUniqueValues?: (
     table: TTable<TData>,
     columnId: string,
@@ -94,14 +95,11 @@ export interface DataTableInfiniteProps<TData, TValue, TMeta> {
   fetchNextPage: (
     options?: FetchNextPageOptions | undefined,
   ) => Promise<unknown>;
-  fetchPreviousPage?: (
-    options?: FetchPreviousPageOptions | undefined,
-  ) => Promise<unknown>;
-  refetch: (options?: RefetchOptions | undefined) => void;
+  refetch?: (options?: RefetchOptions | undefined) => void;
+  renderActions?: () => React.ReactNode;
   renderLiveRow?: (props?: { row: Row<TData> }) => React.ReactNode;
   renderSheetTitle: (props: { row?: Row<TData> }) => React.ReactNode;
-  // TODO:
-  renderChart?: () => React.ReactNode;
+  rowVisualSignature?: string | number;
   searchParamsParser: Record<string, ParserBuilder<any>>;
 }
 
@@ -110,9 +108,12 @@ export function DataTableInfinite<TData, TValue, TMeta>({
   getRowClassName,
   getRowId,
   data,
-  defaultColumnFilters = [],
-  defaultColumnSorting = [],
-  defaultRowSelection = {},
+  columnFilters,
+  onColumnFiltersChange,
+  sorting,
+  onSortingChange,
+  selectedRowId,
+  onSelectedRowChange,
   defaultColumnVisibility = {},
   filterFields = [],
   sheetFields = [],
@@ -120,8 +121,6 @@ export function DataTableInfinite<TData, TValue, TMeta>({
   isLoading,
   fetchNextPage,
   hasNextPage,
-  fetchPreviousPage,
-  refetch,
   totalRows = 0,
   filterRows = 0,
   totalRowsFetched = 0,
@@ -130,30 +129,32 @@ export function DataTableInfinite<TData, TValue, TMeta>({
   getFacetedUniqueValues,
   getFacetedMinMaxValues,
   meta,
+  renderActions,
   renderLiveRow,
   renderSheetTitle,
+  rowVisualSignature,
   searchParamsParser,
 }: DataTableInfiniteProps<TData, TValue, TMeta>) {
-  const [columnFilters, setColumnFilters] =
-    React.useState<ColumnFiltersState>(defaultColumnFilters);
-  const [sorting, setSorting] =
-    React.useState<SortingState>(defaultColumnSorting);
-  const [rowSelection, setRowSelection] =
-    React.useState<RowSelectionState>(defaultRowSelection);
+  const defaultColumnOrder = React.useMemo(
+    () => columns.map((column, index) => getColumnDefID(column, index)),
+    [columns],
+  );
   const [columnOrder, setColumnOrder] = useLocalStorage<string[]>(
     "data-table-column-order",
-    [],
+    defaultColumnOrder,
   );
   const [columnVisibility, setColumnVisibility] =
     useLocalStorage<VisibilityState>(
       "data-table-visibility",
       defaultColumnVisibility,
     );
+  const [wrapCells, setWrapCells] = useLocalStorage<boolean>(
+    "data-table-wrap-cells",
+    false,
+  );
   const topBarRef = React.useRef<HTMLDivElement>(null);
   const tableRef = React.useRef<HTMLTableElement>(null);
   const [topBarHeight, setTopBarHeight] = React.useState(0);
-  // FIXME: searchParamsParser needs to be passed as property
-  const [_, setSearch] = useQueryStates(searchParamsParser);
 
   const onScroll = React.useCallback(
     (e: React.UIEvent<HTMLElement>) => {
@@ -161,11 +162,16 @@ export function DataTableInfinite<TData, TValue, TMeta>({
         Math.ceil(e.currentTarget.scrollTop + e.currentTarget.clientHeight) >=
         e.currentTarget.scrollHeight;
 
-      if (onPageBottom && !isFetching && totalRowsFetched < filterRows) {
+      if (
+        onPageBottom &&
+        hasNextPage &&
+        !isFetching &&
+        totalRowsFetched < filterRows
+      ) {
         fetchNextPage();
       }
     },
-    [fetchNextPage, isFetching, filterRows, totalRowsFetched],
+    [fetchNextPage, hasNextPage, isFetching, filterRows, totalRowsFetched],
   );
 
   React.useEffect(() => {
@@ -181,7 +187,7 @@ export function DataTableInfinite<TData, TValue, TMeta>({
 
     observer.observe(topBar);
     return () => observer.unobserve(topBar);
-  }, [topBarRef]);
+  }, []);
 
   const table = useReactTable({
     data,
@@ -190,16 +196,13 @@ export function DataTableInfinite<TData, TValue, TMeta>({
       columnFilters,
       sorting,
       columnVisibility,
-      rowSelection,
       columnOrder,
     },
-    enableMultiRowSelection: false,
     columnResizeMode: "onChange",
     getRowId,
     onColumnVisibilityChange: setColumnVisibility,
-    onColumnFiltersChange: setColumnFilters,
-    onRowSelectionChange: setRowSelection,
-    onSortingChange: setSorting,
+    onColumnFiltersChange,
+    onSortingChange,
     onColumnOrderChange: setColumnOrder,
     getSortedRowModel: getSortedRowModel(),
     getCoreRowModel: getCoreRowModel(),
@@ -207,87 +210,152 @@ export function DataTableInfinite<TData, TValue, TMeta>({
     getFacetedRowModel: getFacetedRowModel(),
     getFacetedUniqueValues: getTTableFacetedUniqueValues(),
     getFacetedMinMaxValues: getTTableFacetedMinMaxValues(),
-    filterFns: { inDateRange, arrSome },
+    filterFns: { inDateRange, arrSome, matchCEFExtensions },
     debugAll: process.env.NEXT_PUBLIC_TABLE_DEBUG === "true",
     meta: { getRowClassName },
   });
 
-  React.useEffect(() => {
-    const columnFiltersWithNullable = filterFields.map((field) => {
-      const filterValue = columnFilters.find(
-        (filter) => filter.id === field.value,
-      );
-      if (!filterValue) return { id: field.value, value: null };
-      return { id: field.value, value: filterValue.value };
-    });
+  const rowLayoutSignature = React.useMemo(
+    () =>
+      JSON.stringify({
+        columnOrder,
+        columnVisibility,
+        wrapCells,
+      }),
+    [columnOrder, columnVisibility, wrapCells],
+  );
 
-    const search = columnFiltersWithNullable.reduce(
-      (prev, curr) => {
-        prev[curr.id as string] = curr.value;
-        return prev;
-        return { ...prev, [curr.id]: curr.value };
-      },
-      {} as Record<string, unknown>,
+  const visibleColumnIDs = React.useMemo(
+    () => {
+      void rowLayoutSignature;
+      return table.getVisibleLeafColumns().map((column) => column.id);
+    },
+    [rowLayoutSignature, table],
+  );
+
+  React.useEffect(() => {
+    const normalizedColumnOrder = normalizeColumnOrder(
+      columnOrder,
+      defaultColumnOrder,
     );
 
-    setSearch(search);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [columnFilters]);
+    if (!areStringArraysEqual(columnOrder, normalizedColumnOrder)) {
+      setColumnOrder(normalizedColumnOrder);
+    }
+  }, [columnOrder, defaultColumnOrder, setColumnOrder]);
 
   React.useEffect(() => {
-    setSearch({ sort: sorting?.[0] || null });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sorting]);
+    const normalizedColumnVisibility = normalizeColumnVisibility(
+      columnVisibility,
+      defaultColumnVisibility,
+      defaultColumnOrder,
+    );
 
-  const selectedRow = React.useMemo(() => {
-    if ((isLoading || isFetching) && !data.length) return;
-    const selectedRowKey = Object.keys(rowSelection)?.[0];
-    return table
-      .getCoreRowModel()
-      .flatRows.find((row) => row.id === selectedRowKey);
-  }, [rowSelection, table, isLoading, isFetching, data]);
-
-  // TODO: can only share uuid within the first batch
-  React.useEffect(() => {
-    if (isLoading || isFetching) return;
-    if (Object.keys(rowSelection)?.length && !selectedRow) {
-      setSearch({ uuid: null });
-      setRowSelection({});
-    } else {
-      setSearch({ uuid: Object.keys(rowSelection)?.[0] || null });
+    if (
+      !areVisibilityStatesEqual(columnVisibility, normalizedColumnVisibility)
+    ) {
+      setColumnVisibility(normalizedColumnVisibility);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rowSelection, selectedRow, isLoading, isFetching]);
-
-  /**
-   * https://tanstack.com/table/v8/docs/guide/column-sizing#advanced-column-resizing-performance
-   * Instead of calling `column.getSize()` on every render for every header
-   * and especially every data cell (very expensive),
-   * we will calculate all column sizes at once at the root table level in a useMemo
-   * and pass the column sizes down as CSS variables to the <table> element.
-   */
-  const columnSizeVars = React.useMemo(() => {
-    const headers = table.getFlatHeaders();
-    const colSizes: { [key: string]: string } = {};
-    for (let i = 0; i < headers.length; i++) {
-      const header = headers[i]!;
-      // REMINDER: replace "." with "-" to avoid invalid CSS variable name (e.g. "timing.dns" -> "timing-dns")
-      colSizes[`--header-${header.id.replace(".", "-")}-size`] =
-        `${header.getSize()}px`;
-      colSizes[`--col-${header.column.id.replace(".", "-")}-size`] =
-        `${header.column.getSize()}px`;
-    }
-    return colSizes;
   }, [
-    table.getState().columnSizingInfo,
-    table.getState().columnSizing,
-    table.getState().columnVisibility,
+    columnVisibility,
+    defaultColumnVisibility,
+    defaultColumnOrder,
+    setColumnVisibility,
   ]);
 
+  const visibleRows = table.getRowModel().rows;
+
+  const selectedRow = React.useMemo(() => {
+    if (!selectedRowId) return undefined;
+    return visibleRows.find((row) => row.id === selectedRowId);
+  }, [selectedRowId, visibleRows]);
+
+  React.useEffect(() => {
+    if (!selectedRowId || selectedRow || isLoading || isFetching) return;
+    onSelectedRowChange(null);
+  }, [
+    isFetching,
+    isLoading,
+    onSelectedRowChange,
+    selectedRow,
+    selectedRowId,
+  ]);
+
+  const selectedRowIndex = React.useMemo(() => {
+    if (!selectedRow) return -1;
+    return visibleRows.findIndex((row) => row.id === selectedRow.id);
+  }, [selectedRow, visibleRows]);
+
+  const prevRowId =
+    selectedRowIndex > 0 ? visibleRows[selectedRowIndex - 1]?.id : undefined;
+  const nextRowId =
+    selectedRowIndex >= 0 ? visibleRows[selectedRowIndex + 1]?.id : undefined;
+
+  const handleCloseSelectedRow = React.useCallback(() => {
+    const rowId = selectedRowId;
+    onSelectedRowChange(null);
+
+    if (!rowId) return;
+
+    setTimeout(() => {
+      document.getElementById(rowId)?.focus();
+    }, 0);
+  }, [onSelectedRowChange, selectedRowId]);
+
+  const handleSelectRow = React.useCallback(
+    (rowId: string) => {
+      onSelectedRowChange(selectedRowId === rowId ? null : rowId);
+    },
+    [onSelectedRowChange, selectedRowId],
+  );
+
+  const handlePrevRow = React.useCallback(() => {
+    if (prevRowId) {
+      onSelectedRowChange(prevRowId);
+    }
+  }, [onSelectedRowChange, prevRowId]);
+
+  const handleNextRow = React.useCallback(() => {
+    if (nextRowId) {
+      onSelectedRowChange(nextRowId);
+    }
+  }, [nextRowId, onSelectedRowChange]);
+
+  const visibleRowCount = visibleRows.length;
+  const canLoadMore = Boolean(hasNextPage) && visibleRowCount > 0;
+
+  const columnSizingInfo = table.getState().columnSizingInfo;
+  const columnSizing = table.getState().columnSizing;
+  const tableColumnVisibility = table.getState().columnVisibility;
+  const columnSizingSignature = React.useMemo(
+    () =>
+      JSON.stringify({
+        columnSizing,
+        columnSizingInfo,
+        columnVisibility: tableColumnVisibility,
+      }),
+    [columnSizing, columnSizingInfo, tableColumnVisibility],
+  );
+
+  const columnSizeVars = React.useMemo(() => {
+    void columnSizingSignature;
+    const headers = table.getFlatHeaders();
+    const colSizes: { [key: string]: string } = {};
+
+    for (const header of headers) {
+      const headerID = toCSSVariableID(header.id);
+      const columnID = toCSSVariableID(header.column.id);
+      colSizes[`--header-${headerID}-size`] = `${header.getSize()}px`;
+      colSizes[`--col-${columnID}-size`] = `${header.column.getSize()}px`;
+    }
+
+    return colSizes;
+  }, [columnSizingSignature, table]);
+
   useHotKey(() => {
-    setColumnOrder([]);
+    setColumnOrder(defaultColumnOrder);
     setColumnVisibility(defaultColumnVisibility);
-  }, "u");
+  }, HOTKEYS.resetColumns);
 
   return (
     <DataTableProvider
@@ -296,9 +364,10 @@ export function DataTableInfinite<TData, TValue, TMeta>({
       filterFields={filterFields}
       columnFilters={columnFilters}
       sorting={sorting}
-      rowSelection={rowSelection}
       columnOrder={columnOrder}
       columnVisibility={columnVisibility}
+      wrapCells={wrapCells}
+      setWrapCells={setWrapCells}
       enableColumnOrdering={true}
       isLoading={isFetching || isLoading}
       getFacetedUniqueValues={getFacetedUniqueValues}
@@ -315,18 +384,15 @@ export function DataTableInfinite<TData, TValue, TMeta>({
       >
         <div
           className={cn(
-            "h-full w-full flex-col sm:sticky sm:top-0 sm:max-h-screen sm:min-h-screen sm:min-w-52 sm:max-w-52 sm:self-start md:min-w-72 md:max-w-72",
+            "hidden h-full w-full flex-col sm:flex sm:sticky sm:top-0 sm:max-h-screen sm:min-h-screen sm:min-w-52 sm:max-w-52 sm:self-start md:min-w-72 md:max-w-72",
             "group-data-[expanded=false]/controls:hidden",
-            "hidden sm:flex",
           )}
         >
           <div className="border-b border-border bg-background p-2 md:sticky md:top-0">
             <div className="flex h-[46px] items-center justify-between gap-3">
               <p className="px-2 font-medium text-foreground">Filters</p>
               <div>
-                {table.getState().columnFilters.length ? (
-                  <DataTableResetButton />
-                ) : null}
+                {columnFilters.length ? <DataTableResetButton /> : null}
               </div>
             </div>
           </div>
@@ -340,31 +406,17 @@ export function DataTableInfinite<TData, TValue, TMeta>({
         <div
           className={cn(
             "flex max-w-full flex-1 flex-col border-border sm:border-l",
-            // Chrome issue
             "group-data-[expanded=true]/controls:sm:max-w-[calc(100vw_-_208px)] group-data-[expanded=true]/controls:md:max-w-[calc(100vw_-_288px)]",
           )}
         >
           <div
             ref={topBarRef}
             className={cn(
-              "flex flex-col gap-4 bg-background p-2",
-              "sticky top-0 z-10 pb-4",
+              "sticky top-0 z-10 flex flex-col gap-4 bg-background p-2 pb-4",
             )}
           >
             <DataTableFilterCommand searchParamsParser={searchParamsParser} />
-            {/* TBD: better flexibility with compound components? */}
-            <DataTableToolbar
-              renderActions={() => [
-                <RefreshButton key="refresh" onClick={refetch} />,
-                fetchPreviousPage ? (
-                  <LiveButton
-                    key="live"
-                    fetchPreviousPage={fetchPreviousPage}
-                  />
-                ) : null,
-              ]}
-            />
-            {/* TODO: move up to client component */}
+            <DataTableToolbar renderActions={renderActions} />
             <TimelineChart
               data={chartData}
               className="-mb-2"
@@ -375,7 +427,6 @@ export function DataTableInfinite<TData, TValue, TMeta>({
             <Table
               ref={tableRef}
               onScroll={onScroll}
-              // REMINDER: https://stackoverflow.com/questions/50361698/border-style-do-not-work-with-sticky-position-element
               className="border-separate border-spacing-0"
               containerClassName="max-h-[calc(100vh_-_var(--top-bar-height))]"
             >
@@ -388,42 +439,40 @@ export function DataTableInfinite<TData, TValue, TMeta>({
                       "[&>*]:border-t [&>:not(:last-child)]:border-r",
                     )}
                   >
-                    {headerGroup.headers.map((header) => {
-                      return (
-                        <TableHead
-                          key={header.id}
-                          className={cn(
-                            "relative select-none truncate border-b border-border [&>.cursor-col-resize]:last:opacity-0",
-                            header.column.columnDef.meta?.headerClassName,
-                          )}
-                          aria-sort={
-                            header.column.getIsSorted() === "asc"
-                              ? "ascending"
-                              : header.column.getIsSorted() === "desc"
-                                ? "descending"
-                                : "none"
-                          }
-                        >
-                          {header.isPlaceholder
-                            ? null
-                            : flexRender(
-                                header.column.columnDef.header,
-                                header.getContext(),
-                              )}
-                          {header.column.getCanResize() && (
-                            <div
-                              onDoubleClick={() => header.column.resetSize()}
-                              onMouseDown={header.getResizeHandler()}
-                              onTouchStart={header.getResizeHandler()}
-                              className={cn(
-                                "user-select-none absolute -right-2 top-0 z-10 flex h-full w-4 cursor-col-resize touch-none justify-center",
-                                "before:absolute before:inset-y-0 before:w-px before:translate-x-px before:bg-border",
-                              )}
-                            />
-                          )}
-                        </TableHead>
-                      );
-                    })}
+                    {headerGroup.headers.map((header) => (
+                      <TableHead
+                        key={header.id}
+                        className={cn(
+                          "relative select-none truncate border-b border-border [&>.cursor-col-resize]:last:opacity-0",
+                          header.column.columnDef.meta?.headerClassName,
+                        )}
+                        aria-sort={
+                          header.column.getIsSorted() === "asc"
+                            ? "ascending"
+                            : header.column.getIsSorted() === "desc"
+                              ? "descending"
+                              : "none"
+                        }
+                      >
+                        {header.isPlaceholder
+                          ? null
+                          : flexRender(
+                              header.column.columnDef.header,
+                              header.getContext(),
+                            )}
+                        {header.column.getCanResize() ? (
+                          <div
+                            onDoubleClick={() => header.column.resetSize()}
+                            onMouseDown={header.getResizeHandler()}
+                            onTouchStart={header.getResizeHandler()}
+                            className={cn(
+                              "user-select-none absolute -right-2 top-0 z-10 flex h-full w-4 cursor-col-resize touch-none justify-center",
+                              "before:absolute before:inset-y-0 before:w-px before:translate-x-px before:bg-border",
+                            )}
+                          />
+                        ) : null}
+                      </TableHead>
+                    ))}
                   </TableRow>
                 ))}
               </TableHeader>
@@ -431,20 +480,24 @@ export function DataTableInfinite<TData, TValue, TMeta>({
                 id="content"
                 tabIndex={-1}
                 className="outline-1 -outline-offset-1 outline-primary transition-colors focus-visible:outline"
-                // REMINDER: avoids scroll (skipping the table header) when using skip to content
                 style={{
                   scrollMarginTop: "calc(var(--top-bar-height) + 40px)",
                 }}
               >
-                {table.getRowModel().rows?.length ? (
-                  table.getRowModel().rows.map((row) => (
-                    // REMINDER: if we want to add arrow navigation https://github.com/TanStack/table/discussions/2752#discussioncomment-192558
+                {visibleRows.length ? (
+                  visibleRows.map((row) => (
                     <React.Fragment key={row.id}>
                       {renderLiveRow?.({ row })}
                       <MemoizedRow
+                        key={`${row.id}:${rowLayoutSignature}`}
                         row={row}
-                        table={table}
-                        selected={row.getIsSelected()}
+                        selected={selectedRowId === row.id}
+                        layoutSignature={rowLayoutSignature}
+                        visibleColumnIDs={visibleColumnIDs}
+                        wrapCells={wrapCells}
+                        onSelectRow={handleSelectRow}
+                        getRowClassName={getRowClassName}
+                        rowVisualSignature={rowVisualSignature}
                       />
                     </React.Fragment>
                   ))
@@ -453,7 +506,7 @@ export function DataTableInfinite<TData, TValue, TMeta>({
                     {renderLiveRow?.()}
                     <TableRow>
                       <TableCell
-                        colSpan={columns.length}
+                        colSpan={table.getVisibleLeafColumns().length}
                         className="h-24 text-center"
                       >
                         No results.
@@ -462,10 +515,13 @@ export function DataTableInfinite<TData, TValue, TMeta>({
                   </React.Fragment>
                 )}
                 <TableRow className="hover:bg-transparent data-[state=selected]:bg-transparent">
-                  <TableCell colSpan={columns.length} className="text-center">
-                    {hasNextPage || isFetching || isLoading ? (
+                  <TableCell
+                    colSpan={table.getVisibleLeafColumns().length}
+                    className="text-center"
+                  >
+                    {canLoadMore || isFetching || isLoading ? (
                       <Button
-                        disabled={isFetching || isLoading}
+                        disabled={isFetching || isLoading || !canLoadMore}
                         onClick={() => fetchNextPage()}
                         size="sm"
                         variant="outline"
@@ -496,21 +552,25 @@ export function DataTableInfinite<TData, TValue, TMeta>({
         </div>
       </div>
       <DataTableSheetDetails
+        open={!!selectedRow}
         title={renderSheetTitle({ row: selectedRow })}
         titleClassName="font-mono"
+        isLoading={Boolean(selectedRowId && !selectedRow && (isLoading || isFetching))}
+        canPrev={Boolean(prevRowId)}
+        canNext={Boolean(nextRowId)}
+        onPrev={handlePrevRow}
+        onNext={handleNextRow}
+        onClose={handleCloseSelectedRow}
       >
         <MemoizedDataTableSheetContent
           table={table}
           data={selectedRow?.original}
           filterFields={filterFields}
           fields={sheetFields}
-          // TODO: check if we should memoize this
-          // REMINDER: this is used to pass additional data like the `InfiniteQueryMeta`
           metadata={{
             totalRows,
             filterRows,
             totalRowsFetched,
-            // REMINDER: includes `currentPercentiles`
             ...meta,
           }}
         />
@@ -519,54 +579,166 @@ export function DataTableInfinite<TData, TValue, TMeta>({
   );
 }
 
-/**
- * REMINDER: this is the heaviest component in the table if lots of rows
- * Some other components are rendered more often necessary, but are fixed size (not like rows that can grow in height)
- * e.g. DataTableFilterControls, DataTableFilterCommand, DataTableToolbar, DataTableHeader
- */
+function getColumnDefID<TData, TValue>(
+  column: ColumnDef<TData, TValue>,
+  index: number,
+) {
+  if ("id" in column && typeof column.id === "string") return column.id;
+  if (
+    "accessorKey" in column &&
+    typeof column.accessorKey === "string" &&
+    column.accessorKey.length > 0
+  ) {
+    return column.accessorKey;
+  }
+
+  return `column-${index}`;
+}
+
+function normalizeColumnOrder(
+  columnOrder: string[],
+  defaultColumnOrder: string[],
+) {
+  const allowedColumnIDs = new Set(defaultColumnOrder);
+  const seenColumnIDs = new Set<string>();
+  const nextColumnOrder = columnOrder.filter((id) => {
+    if (!allowedColumnIDs.has(id) || seenColumnIDs.has(id)) {
+      return false;
+    }
+
+    seenColumnIDs.add(id);
+    return true;
+  });
+
+  for (const columnID of defaultColumnOrder) {
+    if (!nextColumnOrder.includes(columnID)) {
+      nextColumnOrder.push(columnID);
+    }
+  }
+
+  return nextColumnOrder;
+}
+
+function normalizeColumnVisibility(
+  columnVisibility: VisibilityState,
+  defaultColumnVisibility: VisibilityState,
+  defaultColumnOrder: string[],
+) {
+  const nextColumnVisibility: VisibilityState = {};
+
+  for (const columnID of defaultColumnOrder) {
+    if (typeof columnVisibility[columnID] === "boolean") {
+      nextColumnVisibility[columnID] = columnVisibility[columnID];
+      continue;
+    }
+
+    if (typeof defaultColumnVisibility[columnID] === "boolean") {
+      nextColumnVisibility[columnID] = defaultColumnVisibility[columnID];
+    }
+  }
+
+  return nextColumnVisibility;
+}
+
+function areStringArraysEqual(left: string[], right: string[]) {
+  if (left.length !== right.length) return false;
+
+  for (let index = 0; index < left.length; index += 1) {
+    if (left[index] !== right[index]) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function areVisibilityStatesEqual(
+  left: VisibilityState,
+  right: VisibilityState,
+) {
+  const leftKeys = Object.keys(left).sort();
+  const rightKeys = Object.keys(right).sort();
+
+  if (!areStringArraysEqual(leftKeys, rightKeys)) {
+    return false;
+  }
+
+  for (const key of leftKeys) {
+    if (left[key] !== right[key]) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+function toCSSVariableID(value: string) {
+  return value.replaceAll(".", "-").toLowerCase();
+}
 
 function Row<TData>({
   row,
-  table,
   selected,
+  layoutSignature,
+  visibleColumnIDs,
+  wrapCells,
+  onSelectRow,
+  getRowClassName,
+  rowVisualSignature,
 }: {
   row: Row<TData>;
-  table: TTable<TData>;
-  // REMINDER: row.getIsSelected(); - just for memoization
   selected?: boolean;
+  layoutSignature: string;
+  visibleColumnIDs: string[];
+  wrapCells: boolean;
+  onSelectRow: (rowId: string) => void;
+  getRowClassName?: (row: Row<TData>) => string;
+  rowVisualSignature?: string | number;
 }) {
-  // REMINDER: rerender the row when live mode is toggled - used to opacity the row
-  // via the `getRowClassName` prop - but for some reasons it wil render the row on data fetch
-  useQueryState("live", searchParamsParser.live);
+  void layoutSignature;
+  void rowVisualSignature;
+
+  const cellsByColumnID = new Map(
+    row.getAllCells().map((cell) => [cell.column.id, cell]),
+  );
+
   return (
     <TableRow
       id={row.id}
       tabIndex={0}
-      data-state={selected && "selected"}
-      onClick={() => row.toggleSelected()}
+      data-state={selected ? "selected" : undefined}
+      onClick={() => onSelectRow(row.id)}
       onKeyDown={(event) => {
         if (event.key === "Enter") {
           event.preventDefault();
-          row.toggleSelected();
+          onSelectRow(row.id);
         }
       }}
       className={cn(
         "[&>:not(:last-child)]:border-r",
         "outline-1 -outline-offset-1 outline-primary transition-colors focus-visible:bg-muted/50 focus-visible:outline data-[state=selected]:outline",
-        table.options.meta?.getRowClassName?.(row),
+        getRowClassName?.(row),
       )}
     >
-      {row.getVisibleCells().map((cell) => (
-        <TableCell
-          key={cell.id}
-          className={cn(
-            "truncate border-b border-border",
-            cell.column.columnDef.meta?.cellClassName,
-          )}
-        >
-          {flexRender(cell.column.columnDef.cell, cell.getContext())}
-        </TableCell>
-      ))}
+      {visibleColumnIDs.map((columnID) => {
+        const cell = cellsByColumnID.get(columnID);
+        if (!cell) return null;
+
+        return (
+          <TableCell
+            key={cell.id}
+            className={cn(
+              "border-b border-border",
+              wrapCells
+                ? "whitespace-pre-wrap break-words align-top"
+                : "truncate",
+              cell.column.columnDef.meta?.cellClassName,
+            )}
+          >
+            {flexRender(cell.column.columnDef.cell, cell.getContext())}
+          </TableCell>
+        );
+      })}
     </TableRow>
   );
 }
@@ -574,5 +746,9 @@ function Row<TData>({
 const MemoizedRow = React.memo(
   Row,
   (prev, next) =>
-    prev.row.id === next.row.id && prev.selected === next.selected,
+    prev.row.id === next.row.id &&
+    prev.selected === next.selected &&
+    prev.layoutSignature === next.layoutSignature &&
+    prev.wrapCells === next.wrapCells &&
+    prev.rowVisualSignature === next.rowVisualSignature,
 ) as typeof Row;

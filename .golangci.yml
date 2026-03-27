@@ -1,0 +1,98 @@
+version: "2"
+run:
+  go: "1.25"
+linters:
+  enable:
+    # Essential core linters (enabled by default, explicitly listed)
+    - errcheck      # Check for unchecked errors (critical for Go)
+    - govet         # Go's built-in static analyzer
+    - staticcheck   # Advanced static analysis (with SA5011 disabled)
+    - ineffassign   # Detect ineffectual assignments
+    - unused        # Find unused constants, variables, functions and types
+
+    # Network/HTTP service specific linters (HIGH PRIORITY)
+    - bodyclose     # Ensure HTTP response bodies are closed (critical for network service)
+    - noctx         # Detect missing context.Context usage (important for timeouts)
+    - nosprintfhostport # Prevent URL construction bugs (relevant for DNS/network)
+
+    # Error handling linters (HIGH PRIORITY)
+    - errorlint     # Proper error wrapping (Go 1.13+ best practices)
+    - nilerr        # Catch nil error return bugs
+
+    # Performance linters (MEDIUM PRIORITY)
+    - prealloc      # Pre-allocate slices for better performance
+
+    # Code quality linters
+    - gocritic      # Comprehensive Go linter with many checks (hugeParam disabled)
+
+    # Security linters
+    - gosec         # Security-focused linter
+
+    # Other useful linters
+    - misspell      # Find misspelled words
+    - unconvert     # Remove unnecessary conversions
+    - unparam       # Find unused parameters
+  settings:
+    errcheck:
+      check-type-assertions: true
+      check-blank: false
+    govet:
+      check-shadowing: false  # Can be too noisy in some codebases
+    gocritic:
+      disabled-checks:
+        - paramTypeCombine  # Can be too strict for some APIs
+        - hugeParam        # Disable for now - can be addressed later
+      enabled-tags:
+        - performance
+        - style
+        - diagnostic
+    gosec:
+      excludes:
+        - G204  # Subprocess with variable - common in tests
+    staticcheck:
+      # Disable some noisy checks
+      checks: ["all", "-SA5011"]  # Disable nil pointer dereference checks (too many false positives)
+    revive:
+      rules:
+        - name: unused-parameter
+          disabled: true  # Too strict for handler functions
+        - name: indent-error-flow
+          disabled: true  # Style preference
+    wrapcheck:
+      ignoreSigs:
+        - .Err()  # Don't require wrapping context.Err()
+      ignorePackageGlobs:
+        - "*.test"
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    rules:
+      - linters:
+          - gocritic
+          - gosec
+        path: _test\.go
+      - linters:
+          - govet
+        text: shadow
+    paths:
+      - third_party$
+      - builtin$
+      - examples$
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  new: false
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$

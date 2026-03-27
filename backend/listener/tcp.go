@@ -2,6 +2,8 @@ package listener
 
 import (
 	"bufio"
+	"context"
+	"errors"
 	"log"
 	"net"
 	"sloggo/db"
@@ -28,14 +30,14 @@ func getRFC5424Parser() syslog.Machine {
 }
 
 func StartTCPListener() {
-	port := utils.TcpPort
+	port := utils.TCPPort
 
-	_, err := net.LookupPort("tcp", port)
+	_, err := net.DefaultResolver.LookupPort(context.Background(), "tcp", port)
 	if err != nil {
 		log.Fatalf("Invalid TCP port %s: %v", port, err)
 	}
 
-	listener, err := net.Listen("tcp", ":"+port)
+	listener, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", ":"+port)
 	if err != nil {
 		log.Fatalf("Failed to start TCP listener on port %s: %v", port, err)
 	}
@@ -88,16 +90,23 @@ func handleTCPConnection(conn net.Conn) {
 	buffer := make([]byte, 0, 64*1024)
 	scanner.Buffer(buffer, maxScanSize)
 
-	conn.SetReadDeadline(time.Now().Add(30 * time.Second))
+	if err := conn.SetReadDeadline(time.Now().Add(30 * time.Second)); err != nil {
+		log.Printf("Failed to set TCP read deadline: %v", err)
+		return
+	}
 
 	for {
 		// Scan for the next message
 		if !scanner.Scan() {
 			// Check for errors
 			if err := scanner.Err(); err != nil {
-				if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+				var netErr net.Error
+				if errors.As(err, &netErr) && netErr.Timeout() {
 					// Just a timeout, reset deadline and try again
-					conn.SetReadDeadline(time.Now().Add(30 * time.Second))
+					if deadlineErr := conn.SetReadDeadline(time.Now().Add(30 * time.Second)); deadlineErr != nil {
+						log.Printf("Failed to reset TCP read deadline: %v", deadlineErr)
+						return
+					}
 					continue
 				}
 				log.Printf("TCP connection closed: %v", err)
@@ -107,7 +116,10 @@ func handleTCPConnection(conn net.Conn) {
 		}
 
 		// Reset deadline after successful read
-		conn.SetReadDeadline(time.Now().Add(30 * time.Second))
+		if err := conn.SetReadDeadline(time.Now().Add(30 * time.Second)); err != nil {
+			log.Printf("Failed to refresh TCP read deadline: %v", err)
+			return
+		}
 
 		message := strings.TrimSpace(scanner.Text())
 		if message == "" {
@@ -127,6 +139,9 @@ func handleTCPConnection(conn net.Conn) {
 				if rfc5424Msg, ok := syslogMsg.(*rfc5424.SyslogMessage); ok {
 					logEntry := formats.SyslogMessageToLogEntry(rfc5424Msg)
 					if logEntry != nil {
+						if err := formats.EnrichLogEntryWithCEF(logEntry); err != nil {
+							log.Printf("Failed to parse CEF payload, storing as syslog: %v", err)
+						}
 						if err := db.StoreLog(*logEntry); err != nil {
 							log.Printf("Error storing log: %v", err)
 						}
@@ -141,6 +156,9 @@ func handleTCPConnection(conn net.Conn) {
 		// Try RFC3164 if enabled and not yet parsed
 		if !parsed && (logFormat == "rfc3164" || logFormat == "auto") {
 			if logEntry, err := formats.ParseRFC3164ToLogEntry(message); err == nil {
+				if err := formats.EnrichLogEntryWithCEF(logEntry); err != nil {
+					log.Printf("Failed to parse CEF payload, storing as syslog: %v", err)
+				}
 				if err := db.StoreLog(*logEntry); err != nil {
 					log.Printf("Error storing log: %v", err)
 				}

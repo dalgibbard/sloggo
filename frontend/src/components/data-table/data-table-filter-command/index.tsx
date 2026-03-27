@@ -1,5 +1,6 @@
 "use client";
 
+import { HotkeyKbd } from "@/components/custom/hotkey-kbd";
 import { Kbd } from "@/components/custom/kbd";
 import { useDataTable } from "@/components/data-table/data-table-provider";
 import {
@@ -12,6 +13,7 @@ import {
   CommandSeparator,
 } from "@/components/ui/command";
 import { Separator } from "@/components/ui/separator";
+import { HOTKEYS } from "@/constants/hotkeys";
 import { useHotKey } from "@/hooks/use-hot-key";
 import { useLocalStorage } from "@/hooks/use-local-storage";
 import { formatCompactNumber } from "@/lib/format";
@@ -26,6 +28,7 @@ import {
   getFieldOptions,
   getFilterValue,
   getWordByCaretPosition,
+  isCommandInputReady,
   replaceInputByFieldType,
 } from "./utils";
 
@@ -60,63 +63,129 @@ export function DataTableFilterCommand({
   const [inputValue, setInputValue] = useState<string>(
     columnParser.serialize(columnFilters),
   );
+  const [suggestionNavigationActive, setSuggestionNavigationActive] =
+    useState(false);
   const [lastSearches, setLastSearches] = useLocalStorage<
     {
       search: string;
       timestamp: number;
     }[]
   >("data-table-command", []);
+  const blurActionRef = useRef<"commit" | "cancel" | null>(null);
+  const readyToCommit = useMemo(
+    () => isCommandInputReady({ inputValue, filterFields }),
+    [inputValue, filterFields],
+  );
+  const showMenu = open && !readyToCommit;
+  const commandItemClassName = suggestionNavigationActive
+    ? undefined
+    : "data-[selected=true]:bg-transparent data-[selected=true]:text-foreground";
+
+  const applyInputValue = React.useCallback(
+    (value: string) => {
+      const searchParams = columnParser.parse(value);
+      const currentFilters = table.getState().columnFilters;
+      const currentEnabledFilters = currentFilters.filter((filter) => {
+        const field = _filterFields?.find((field) => field.value === filter.id);
+        return (
+          !field?.commandDisabled ||
+          filter.id === "msgField" ||
+          filter.id === "cefExt"
+        );
+      });
+      const unmanagedFilters = currentFilters.filter((filter) => {
+        return !currentEnabledFilters.some(
+          (enabledFilter) => enabledFilter.id === filter.id,
+        );
+      });
+      const nextEnabledFilters = Object.entries(searchParams).flatMap(
+        ([id, nextValue]) => {
+          if (nextValue == null) return [];
+          return [{ id, value: nextValue }];
+        },
+      );
+      const nextFilters = [...unmanagedFilters, ...nextEnabledFilters];
+
+      if (areColumnFiltersEqual(currentFilters, nextFilters)) {
+        return false;
+      }
+
+      table.setColumnFilters(nextFilters);
+      return true;
+    },
+    [_filterFields, columnParser, table],
+  );
+
+  const rememberSearch = React.useCallback(
+    (value: string) => {
+      const search = value.trim();
+      if (!search) return;
+
+      const timestamp = Date.now();
+      setLastSearches((current) => {
+        const searchIndex = current.findIndex((item) => item.search === search);
+        if (searchIndex !== -1) {
+          return current.map((item, index) =>
+            index === searchIndex ? { ...item, timestamp } : item,
+          );
+        }
+
+        return [...current, { search, timestamp }];
+      });
+    },
+    [setLastSearches],
+  );
+
+  const resetInputValue = React.useCallback(() => {
+    setInputValue(columnParser.serialize(columnFilters));
+    setCurrentWord("");
+    setSuggestionNavigationActive(false);
+  }, [columnFilters, columnParser]);
+
+  const clearInputValue = React.useCallback(() => {
+    applyInputValue("");
+    setInputValue("");
+    setCurrentWord("");
+    setSuggestionNavigationActive(false);
+  }, [applyInputValue]);
+
+  const commitInputValue = React.useCallback(() => {
+    const trimmedInput = inputValue.trim();
+    if (!trimmedInput) {
+      clearInputValue();
+      return true;
+    }
+
+    if (!readyToCommit) {
+      return false;
+    }
+
+    applyInputValue(trimmedInput);
+    rememberSearch(trimmedInput);
+    setInputValue(trimmedInput);
+    setCurrentWord("");
+    setSuggestionNavigationActive(false);
+    return true;
+  }, [
+    applyInputValue,
+    clearInputValue,
+    inputValue,
+    readyToCommit,
+    rememberSearch,
+  ]);
 
   useEffect(() => {
-    // TODO: we could check for ARRAY_DELIMITER or SLIDER_DELIMITER to auto-set filter when typing
-    if (currentWord !== "" && open) return;
-    // reset
-    if (currentWord !== "" && !open) setCurrentWord("");
-    // avoid recursion
-    if (inputValue.trim() === "" && !open) return;
+    if (open) return;
 
-    const searchParams = columnParser.parse(inputValue);
-
-    const currentFilters = table.getState().columnFilters;
-    const currentEnabledFilters = currentFilters.filter((filter) => {
-      const field = _filterFields?.find((field) => field.value === filter.id);
-      return !field?.commandDisabled;
-    });
-    const currentDisabledFilters = currentFilters.filter((filter) => {
-      const field = _filterFields?.find((field) => field.value === filter.id);
-      return field?.commandDisabled;
-    });
-
-    const commandDisabledFilterKeys = currentDisabledFilters.reduce(
-      (prev, curr) => {
-        prev[curr.id] = curr.value;
-        return prev;
-      },
-      {} as Record<string, unknown>,
-    );
-
-    for (const key of Object.keys(searchParams)) {
-      const value = searchParams[key as keyof typeof searchParams];
-      table.getColumn(key)?.setFilterValue(value);
+    setCurrentWord("");
+    setSuggestionNavigationActive(false);
+    const nextInputValue = columnParser.serialize(columnFilters);
+    if (nextInputValue !== inputValue) {
+      setInputValue(nextInputValue);
     }
-    const currentFiltersToReset = currentEnabledFilters.filter((filter) => {
-      return !(filter.id in searchParams);
-    });
-    for (const filter of currentFiltersToReset) {
-      table.getColumn(filter.id)?.setFilterValue(undefined);
-    }
+  }, [columnFilters, columnParser, inputValue, open]);
 
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [inputValue, open, currentWord]);
-
-  useEffect(() => {
-    // REMINDER: only update the input value if the command is closed (avoids jumps while open)
-    if (!open) {
-      setInputValue(columnParser.serialize(columnFilters));
-    }
-  }, [columnFilters, filterFields, open]);
-
-  useHotKey(() => setOpen((open) => !open), "k");
+  useHotKey(() => setOpen((open) => !open), HOTKEYS.toggleCommand);
 
   useEffect(() => {
     if (open) {
@@ -146,10 +215,11 @@ export function DataTableFilterCommand({
             <span>Search data table...</span>
           )}
         </span>
-        <Kbd className="ml-auto text-muted-foreground group-hover:text-accent-foreground">
-          <span className="mr-1">⌘</span>
-          <span>K</span>
-        </Kbd>
+        <HotkeyKbd
+          keys={HOTKEYS.toggleCommand.keys}
+          className="ml-auto"
+          kbdClassName="text-muted-foreground group-hover:text-accent-foreground"
+        />
       </button>
       <Command
         className={cn(
@@ -164,28 +234,54 @@ export function DataTableFilterCommand({
         <CommandInput
           ref={inputRef}
           value={inputValue}
-          onValueChange={setInputValue}
-          onKeyDown={(e) => {
-            if (e.key === "Escape") inputRef?.current?.blur();
+          onValueChange={(nextValue) => {
+            setInputValue(nextValue);
+            setSuggestionNavigationActive(false);
           }}
-          onBlur={() => {
-            setOpen(false);
-            // FIXME: doesnt reflect the jumps
-            // FIXME: will save non-existing searches
-            // TODO: extract into function
-            const search = inputValue.trim();
-            if (!search) return;
-            const timestamp = Date.now();
-            const searchIndex = lastSearches.findIndex(
-              (item) => item.search === search,
-            );
-            if (searchIndex !== -1) {
-              lastSearches[searchIndex].timestamp = timestamp;
-              setLastSearches(lastSearches);
+          onKeyDown={(e) => {
+            if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+              setSuggestionNavigationActive(true);
               return;
             }
-            setLastSearches([...lastSearches, { search, timestamp }]);
-            return;
+
+            if (e.key === "Enter" && !suggestionNavigationActive) {
+              e.preventDefault();
+              e.stopPropagation();
+              if (commitInputValue()) {
+                blurActionRef.current = "commit";
+                setOpen(false);
+                e.currentTarget.blur();
+              }
+              return;
+            }
+            if (e.key === "Escape") {
+              e.preventDefault();
+              e.stopPropagation();
+              blurActionRef.current = "cancel";
+              resetInputValue();
+              setOpen(false);
+              e.currentTarget.blur();
+            }
+          }}
+          onBlur={() => {
+            const blurAction = blurActionRef.current;
+            blurActionRef.current = null;
+            setOpen(false);
+
+            if (blurAction === "cancel") {
+              return;
+            }
+
+            if (blurAction === "commit") {
+              return;
+            }
+
+            if (readyToCommit) {
+              commitInputValue();
+              return;
+            }
+
+            resetInputValue();
           }}
           onInput={(e) => {
             const caretPosition = e.currentTarget?.selectionStart || -1;
@@ -196,199 +292,304 @@ export function DataTableFilterCommand({
           placeholder="Search data table..."
           className="text-foreground"
         />
-        <div className="relative">
-          <div className="absolute top-2 z-10 w-full overflow-hidden rounded-lg border border-border bg-popover text-popover-foreground shadow-md outline-none animate-in">
-            {/* default height is 300px but in case of more, we'd like to tease the user */}
-            <CommandList className="max-h-[310px]">
-              <CommandGroup heading="Filter">
-                {filterFields.map((field) => {
-                  if (typeof field.value !== "string") return null;
-                  if (inputValue.includes(`${field.value}:`)) return null;
-                  // TBD: should we handle this in the component?
-                  return (
-                    <CommandItem
-                      key={field.value}
-                      value={field.value}
-                      onMouseDown={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                      }}
-                      onSelect={(value) => {
-                        setInputValue((prev) => {
-                          if (currentWord.trim() === "") {
-                            const input = `${prev}${value}`;
-                            return `${input}:`;
-                          }
-                          // lots of cheat
-                          const isStarting = currentWord === prev;
-                          const prefix = isStarting ? "" : " ";
-                          const input = prev.replace(
-                            `${prefix}${currentWord}`,
-                            `${prefix}${value}`,
-                          );
-                          return `${input}:`;
-                        });
-                        setCurrentWord(`${value}:`);
-                      }}
-                      className="group"
-                    >
-                      {field.value}
-                      <CommandItemSuggestions field={field} />
-                    </CommandItem>
-                  );
-                })}
-              </CommandGroup>
-              <CommandSeparator />
-              <CommandGroup heading="Query">
-                {filterFields?.map((field) => {
-                  if (typeof field.value !== "string") return null;
-                  if (!currentWord.includes(`${field.value}:`)) return null;
-
-                  const column = table.getColumn(field.value);
-                  const facetedValue =
-                    getFacetedUniqueValues?.(table, field.value) ||
-                    column?.getFacetedUniqueValues();
-
-                  const options = getFieldOptions({ field });
-
-                  return options.map((optionValue) => {
+        {showMenu ? (
+          <div className="relative">
+            <div className="absolute top-2 z-10 w-full overflow-hidden rounded-lg border border-border bg-popover text-popover-foreground shadow-md outline-none animate-in">
+              {/* default height is 300px but in case of more, we'd like to tease the user */}
+              <CommandList className="max-h-[310px]">
+                <CommandGroup heading="Filter">
+                  {filterFields.map((field) => {
+                    if (typeof field.value !== "string") return null;
+                    if (
+                      field.type !== "input" &&
+                      (inputValue.includes(`${field.value}:`) ||
+                        inputValue.includes(`${field.value}=`))
+                    ) {
+                      return null;
+                    }
+                    // TBD: should we handle this in the component?
                     return (
                       <CommandItem
-                        key={`${String(field.value)}:${optionValue}`}
-                        value={`${String(field.value)}:${optionValue}`}
+                        key={field.value}
+                        value={field.value}
+                        className={cn("group", commandItemClassName)}
                         onMouseDown={(e) => {
                           e.preventDefault();
                           e.stopPropagation();
                         }}
                         onSelect={(value) => {
-                          setInputValue((prev) =>
-                            replaceInputByFieldType({
-                              prev,
-                              currentWord,
-                              optionValue,
-                              value,
-                              field,
-                            }),
+                          setInputValue((prev) => {
+                            const isNegatedField = currentWord.startsWith("!");
+                            const normalizedValue = isNegatedField
+                              ? `!${value}`
+                              : value;
+                            if (currentWord.trim() === "") {
+                              const input = `${prev}${normalizedValue}`;
+                              return `${input}:`;
+                            }
+                            // lots of cheat
+                            const isStarting = currentWord === prev;
+                            const prefix = isStarting ? "" : " ";
+                            const input = prev.replace(
+                              `${prefix}${currentWord}`,
+                              `${prefix}${normalizedValue}`,
+                            );
+                            return `${input}:`;
+                          });
+                          setCurrentWord(
+                            `${currentWord.startsWith("!") ? "!" : ""}${value}:`,
                           );
-                          setCurrentWord("");
                         }}
                       >
-                        {`${optionValue}`}
-                        {facetedValue?.has(optionValue) ? (
-                          <span className="ml-auto font-mono text-muted-foreground">
-                            {formatCompactNumber(
-                              facetedValue.get(optionValue) || 0,
-                            )}
-                          </span>
-                        ) : null}
+                        {field.value}
+                        <CommandItemSuggestions
+                          field={field}
+                          engaged={suggestionNavigationActive}
+                        />
                       </CommandItem>
                     );
-                  });
-                })}
-              </CommandGroup>
-              <CommandSeparator />
-              <CommandGroup heading="Suggestions">
-                {lastSearches
-                  ?.sort((a, b) => b.timestamp - a.timestamp)
-                  .slice(0, 5)
-                  .map((item) => {
-                    return (
-                      <CommandItem
-                        key={`suggestion:${item.search}`}
-                        value={`suggestion:${item.search}`}
-                        onMouseDown={(e) => {
-                          e.preventDefault();
-                          e.stopPropagation();
-                        }}
-                        onSelect={(value) => {
-                          const search = value.replace("suggestion:", "");
-                          setInputValue(`${search} `);
-                          setCurrentWord("");
-                        }}
-                        className="group"
-                      >
-                        {item.search}
-                        <span className="ml-auto truncate text-muted-foreground/80 group-aria-[selected=true]:block">
-                          {formatDistanceToNow(item.timestamp, {
-                            addSuffix: true,
-                          })}
-                        </span>
-                        <button
-                          type="button"
+                  })}
+                </CommandGroup>
+                <CommandSeparator />
+                <CommandGroup heading="Query">
+                  {filterFields?.map((field) => {
+                    if (typeof field.value !== "string") return null;
+                    if (
+                      !currentWord.includes(`${field.value}:`) &&
+                      !currentWord.includes(`${field.value}=`)
+                    ) {
+                      return null;
+                    }
+
+                    const column = table.getColumn(field.value);
+                    const facetedValue =
+                      getFacetedUniqueValues?.(table, field.value) ||
+                      column?.getFacetedUniqueValues();
+
+                    const options = getFieldOptions({ field });
+
+                    return options.map((optionValue) => {
+                      return (
+                        <CommandItem
+                          key={`${String(field.value)}:${optionValue}`}
+                          value={`${String(field.value)}:${optionValue}`}
+                          className={commandItemClassName}
                           onMouseDown={(e) => {
                             e.preventDefault();
                             e.stopPropagation();
                           }}
-                          onClick={(e) => {
+                          onSelect={(value) => {
+                            setInputValue((prev) =>
+                              replaceInputByFieldType({
+                                prev,
+                                currentWord,
+                                optionValue,
+                                value,
+                                field,
+                              }),
+                            );
+                            setCurrentWord("");
+                          }}
+                        >
+                          {`${optionValue}`}
+                          {facetedValue?.has(optionValue) ? (
+                            <span className="ml-auto font-mono text-muted-foreground">
+                              {formatCompactNumber(
+                                facetedValue.get(optionValue) || 0,
+                              )}
+                            </span>
+                          ) : null}
+                        </CommandItem>
+                      );
+                    });
+                  })}
+                </CommandGroup>
+                <CommandSeparator />
+                <CommandGroup heading="Suggestions">
+                  {lastSearches
+                    ?.sort((a, b) => b.timestamp - a.timestamp)
+                    .slice(0, 5)
+                    .map((item) => {
+                      return (
+                        <CommandItem
+                          key={`suggestion:${item.search}`}
+                          value={`suggestion:${item.search}`}
+                          className={cn("group", commandItemClassName)}
+                          onMouseDown={(e) => {
                             e.preventDefault();
                             e.stopPropagation();
-                            // TODO: extract into function
-                            setLastSearches(
-                              lastSearches.filter(
-                                (i) => i.search !== item.search,
-                              ),
-                            );
                           }}
-                          className="ml-1 hidden rounded-md p-0.5 hover:bg-background group-aria-[selected=true]:block"
+                          onSelect={(value) => {
+                            const search = value.replace("suggestion:", "");
+                            setInputValue(`${search} `);
+                            setCurrentWord("");
+                          }}
                         >
-                          <X className="h-4 w-4" />
-                        </button>
-                      </CommandItem>
-                    );
-                  })}
-              </CommandGroup>
-              <CommandEmpty>No results found.</CommandEmpty>
-            </CommandList>
-            <div
-              className="flex flex-wrap justify-between gap-3 border-t bg-accent/50 px-2 py-1.5 text-sm text-accent-foreground"
-              cmdk-footer=""
-            >
-              <div className="flex flex-wrap gap-3">
-                <span>
-                  Use <Kbd variant="outline">↑</Kbd>{" "}
-                  <Kbd variant="outline">↓</Kbd> to navigate
-                </span>
-                <span>
-                  <Kbd variant="outline">Enter</Kbd> to query
-                </span>
-                <span>
-                  <Kbd variant="outline">Esc</Kbd> to close
-                </span>
-                <Separator orientation="vertical" className="my-auto h-3" />
-                <span>
-                  Union: <Kbd variant="outline">regions:a,b</Kbd>
-                </span>
-                <span>
-                  Range: <Kbd variant="outline">p95:59-340</Kbd>
-                </span>
+                          {item.search}
+                          <span
+                            className={cn(
+                              "ml-auto truncate text-muted-foreground/80",
+                              suggestionNavigationActive ? "group-aria-[selected=true]:block" : "hidden",
+                            )}
+                          >
+                            {formatDistanceToNow(item.timestamp, {
+                              addSuffix: true,
+                            })}
+                          </span>
+                          <button
+                            type="button"
+                            onMouseDown={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                            }}
+                            onClick={(e) => {
+                              e.preventDefault();
+                              e.stopPropagation();
+                              setLastSearches(
+                                lastSearches.filter(
+                                  (i) => i.search !== item.search,
+                                ),
+                              );
+                            }}
+                            className={cn(
+                              "ml-1 rounded-md p-0.5 hover:bg-background",
+                              suggestionNavigationActive ? "hidden group-aria-[selected=true]:block" : "hidden",
+                            )}
+                          >
+                            <X className="h-4 w-4" />
+                          </button>
+                        </CommandItem>
+                      );
+                    })}
+                </CommandGroup>
+                <CommandEmpty>No results found.</CommandEmpty>
+              </CommandList>
+              <div
+                className="flex flex-wrap justify-between gap-3 border-t bg-accent/50 px-2 py-1.5 text-sm text-accent-foreground"
+                cmdk-footer=""
+              >
+                <div className="flex flex-wrap gap-3">
+                  <span>
+                    Use <Kbd variant="outline">↑</Kbd>{" "}
+                    <Kbd variant="outline">↓</Kbd> to navigate
+                  </span>
+                  <span>
+                    <Kbd variant="outline">Enter</Kbd> to query
+                  </span>
+                  <span>
+                    <Kbd variant="outline">Esc</Kbd> to close
+                  </span>
+                  <Separator orientation="vertical" className="my-auto h-3" />
+                  <span>
+                    Union: <Kbd variant="outline">regions:a,b</Kbd>
+                  </span>
+                  <span>
+                    Range: <Kbd variant="outline">p95:59-340</Kbd>
+                  </span>
+                  <span>
+                    Exclude: <Kbd variant="outline">!hostname:router</Kbd>
+                  </span>
+                  <span>
+                    Exclude: <Kbd variant="outline">NOT hostname:router</Kbd>
+                  </span>
+                  <span>
+                    Phrase:{" "}
+                    <Kbd variant="outline">
+                      message:&quot;flow not found&quot;
+                    </Kbd>
+                  </span>
+                  <span>
+                    JSON:{" "}
+                    <Kbd variant="outline">
+                      message.type:&quot;dnsAdBlock&quot;
+                    </Kbd>
+                  </span>
+                </div>
+                {lastSearches.length ? (
+                  <button
+                    type="button"
+                    className="text-muted-foreground hover:text-accent-foreground"
+                    onMouseDown={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                    }}
+                    onClick={() => setLastSearches([])}
+                  >
+                    Clear suggestions
+                  </button>
+                ) : null}
               </div>
-              {lastSearches.length ? (
-                <button
-                  type="button"
-                  className="text-muted-foreground hover:text-accent-foreground"
-                  onMouseDown={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                  }}
-                  onClick={() => setLastSearches([])}
-                >
-                  Clear suggestions
-                </button>
-              ) : null}
             </div>
           </div>
-        </div>
+        ) : null}
       </Command>
     </div>
   );
+}
+
+function areFilterValuesEqual(left: unknown, right: unknown): boolean {
+  if (left === right) return true;
+
+  if (left instanceof Date && right instanceof Date) {
+    return left.getTime() === right.getTime();
+  }
+
+  if (Array.isArray(left) && Array.isArray(right)) {
+    if (left.length !== right.length) return false;
+
+    return left.every((item, index) =>
+      areFilterValuesEqual(item, right[index]),
+    );
+  }
+
+  if (isStringRecord(left) && isStringRecord(right)) {
+    const leftKeys = Object.keys(left).sort();
+    const rightKeys = Object.keys(right).sort();
+
+    if (leftKeys.length !== rightKeys.length) return false;
+
+    return leftKeys.every(
+      (key, index) =>
+        key === rightKeys[index] && left[key] === right[key],
+    );
+  }
+
+  return false;
+}
+
+function areColumnFiltersEqual(
+  left: Array<{ id: string; value: unknown }>,
+  right: Array<{ id: string; value: unknown }>,
+) {
+  if (left.length !== right.length) return false;
+
+  return left.every((filter, index) => {
+    const nextFilter = right[index];
+    if (!nextFilter) return false;
+
+    return (
+      filter.id === nextFilter.id &&
+      areFilterValuesEqual(filter.value, nextFilter.value)
+    );
+  });
+}
+
+function isStringRecord(value: unknown): value is Record<string, string> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return false;
+  }
+
+  return Object.values(value).every((entry) => typeof entry === "string");
 }
 
 // function CommandItemType<TData>
 
 function CommandItemSuggestions<TData>({
   field,
+  engaged,
 }: {
   field: DataTableFilterField<TData>;
+  engaged: boolean;
 }) {
   const { table, getFacetedMinMaxValues, getFacetedUniqueValues } =
     useDataTable();
@@ -396,7 +597,12 @@ function CommandItemSuggestions<TData>({
   switch (field.type) {
     case "checkbox": {
       return (
-        <span className="ml-1 hidden truncate text-muted-foreground/80 group-aria-[selected=true]:block">
+        <span
+          className={cn(
+            "ml-1 truncate text-muted-foreground/80",
+            engaged ? "hidden group-aria-[selected=true]:block" : "hidden",
+          )}
+        >
           {getFacetedUniqueValues
             ? Array.from(getFacetedUniqueValues(table, value)?.keys() || [])
                 .map((value) => `[${value}]`)
@@ -411,14 +617,24 @@ function CommandItemSuggestions<TData>({
         field.max,
       ];
       return (
-        <span className="ml-1 hidden truncate text-muted-foreground/80 group-aria-[selected=true]:block">
+        <span
+          className={cn(
+            "ml-1 truncate text-muted-foreground/80",
+            engaged ? "hidden group-aria-[selected=true]:block" : "hidden",
+          )}
+        >
           [{min} - {max}]
         </span>
       );
     }
     case "input": {
       return (
-        <span className="ml-1 hidden truncate text-muted-foreground/80 group-aria-[selected=true]:block">
+        <span
+          className={cn(
+            "ml-1 truncate text-muted-foreground/80",
+            engaged ? "hidden group-aria-[selected=true]:block" : "hidden",
+          )}
+        >
           [{`${String(field.value)}`} input]
         </span>
       );

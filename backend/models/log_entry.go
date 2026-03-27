@@ -8,18 +8,30 @@ import (
 // It's used both for database operations and API responses
 type LogEntry struct {
 	// Core fields mapped directly from database
-	RowID          int64     `json:"id"` // Built-in unique identifier
-	Facility       uint8     `json:"facility"`
-	Severity       uint8     `json:"severity"`
-	Version        uint16    `json:"version,omitempty"`
-	Timestamp      time.Time `json:"timestamp"`
-	Hostname       string    `json:"hostname"`
-	AppName        string    `json:"appName"` // Note: DB column is app_name
-	ProcID         string    `json:"procId"`  // Note: DB column is procid
-	MsgID          string    `json:"msgId"`   // Note: DB column is msgid
-	StructuredData string    `json:"-"`       // Note: DB column is structured_data
-	Message        string    `json:"message"` // Note: DB column is msg
+	RowID            int64     `json:"id"` // Built-in unique identifier
+	Facility         uint8     `json:"facility"`
+	Severity         uint8     `json:"severity"`
+	Version          uint16    `json:"version,omitempty"`
+	Timestamp        time.Time `json:"timestamp"`
+	Hostname         string    `json:"hostname"`
+	AppName          string    `json:"appName"` // Note: DB column is app_name
+	ProcID           string    `json:"procId"`  // Note: DB column is procid
+	MsgID            string    `json:"msgId"`   // Note: DB column is msgid
+	StructuredData   string    `json:"-"`       // Note: DB column is structured_data
+	Message          string    `json:"message"` // Note: DB column is msg
+	MessageFields    string    `json:"-"`       // Note: DB column is message_fields
+	Format           string    `json:"format"`
+	CEFVersion       string    `json:"cefVersion,omitempty"`
+	CEFDeviceVendor  string    `json:"cefDeviceVendor,omitempty"`
+	CEFDeviceProduct string    `json:"cefDeviceProduct,omitempty"`
+	CEFDeviceVersion string    `json:"cefDeviceVersion,omitempty"`
+	CEFSignatureID   string    `json:"cefSignatureId,omitempty"`
+	CEFName          string    `json:"cefName,omitempty"`
+	CEFSeverity      string    `json:"cefSeverity,omitempty"`
+	CEFExtensions    string    `json:"-"` // Note: DB column is cef_extensions
 
 	// Derived fields for API responses
 	ParsedStructuredData map[string]map[string]string `json:"structuredData,omitempty"` // Parsed form of StructuredData
+	ParsedCEFExtensions  map[string]string            `json:"cefExtensions,omitempty"`  // Parsed form of CEFExtensions
+	ParsedMessageFields  map[string]string            `json:"messageFields,omitempty"`  // Parsed form of MessageFields
 }

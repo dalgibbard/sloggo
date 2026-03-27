@@ -8,7 +8,7 @@
 </p>
 
 <div align="center">
-    Minimal RFC 5424 syslog collector and viewer based on DuckDB. Runs as a single, resource-friendly process.
+    Minimal syslog collector and viewer based on DuckDB. Runs as a single, resource-friendly process.
 </div>
 
 <br />
@@ -20,7 +20,9 @@
 
 # Introduction
 
-Sloggo is a lightweight log collection and exploration tool. It ingests logs over TCP and UDP using the RFC 5424 Syslog protocol, stores them in DuckDB, and presents them in a clean, modern web UI.
+Sloggo is a lightweight log collection and exploration tool. It ingests logs over TCP and UDP using syslog, stores them in DuckDB, and presents them in a clean, modern web UI.
+
+It supports RFC 5424, RFC 3164, and a few real-world RFC 3164 variations often seen from network gear. It can also optionally parse syslog-wrapped CEF payloads, but CEF support is disabled by default and must be enabled explicitly.
 
 Designed for small to medium-sized setups where you want real-time logs without spinning up the JVM or a full Kubernetes cluster to ingest 10 daily lines of logs.
 
@@ -42,6 +44,7 @@ Sloggo is made by [Phare](https://phare.io), a small bootstrapped company buildi
       -e SLOGGO_UDP_PORT=5514 \
       -e SLOGGO_TCP_PORT=6514 \
       -e SLOGGO_API_PORT=8080 \
+      -e SLOGGO_ENABLE_CEF=false \
       -v ./data:/app/.duckdb \
       ghcr.io/phare/sloggo:latest
    ```
@@ -64,6 +67,27 @@ To run the backend tests:
 make test
 ```
 
+### Debug Image
+
+To run a debug-oriented image with the Go backend and the Next.js development frontend in the same container:
+
+```bash
+docker build --target debug-runtime -t sloggo-debug .
+docker run --rm \
+  -p 5515:5515 -p 5514:5514/udp -p 6514:6514 \
+  -e SLOGGO_LISTENERS=tcp,udp \
+  -e SLOGGO_UDP_PORT=5514 \
+  -e SLOGGO_TCP_PORT=6514 \
+  -e SLOGGO_API_PORT=5515 \
+  -e SLOGGO_ENABLE_CEF=false \
+  -v ./data:/app/.duckdb \
+  sloggo-debug
+```
+
+This target is intended for test/debug deployments. The frontend runs on `SLOGGO_API_PORT` and proxies `/api/*` to the Go backend inside the same container. The syslog listeners remain available on `5514/udp` and `6514/tcp`.
+
+If needed, set `SLOGGO_FRONTEND_PORT` to split the frontend onto a different container port, or `NEXT_PUBLIC_API_BASE_URL` to bypass the built-in API proxy and send frontend requests somewhere else.
+
 ## Environment Variables
 
 The following environment variables can be used to configure the application:
@@ -73,15 +97,27 @@ The following environment variables can be used to configure the application:
 - `SLOGGO_TCP_PORT`: Port for the TCP Syslog listener (default: `6514`).
 - `SLOGGO_API_PORT`: Port for the API (default: `8080`).
 - `SLOGGO_LOG_RETENTION_MINUTES`: Duration in minutes to keep logs before deletion (default: `43200` - 30 days).
+- `SLOGGO_DEBUG`: Enable debug logging (default: `false`).
+- `SLOGGO_ENABLE_CEF`: Enable syslog-wrapped CEF parsing and CEF-specific UI fields (default: `false`).
 - `SLOGGO_LOG_FORMAT`: Log parsing format (default: `auto`). Supported values:
    - `auto`: Try RFC 5424 first, then fall back to RFC 3164.
    - `RFC5424`: Only parse messages as RFC 5424.
    - `RFC3164`: Only parse messages as RFC 3164.
 
+## Features
+
+- RFC 5424 and RFC 3164 ingestion over TCP and UDP
+- Best-effort handling for some broken-but-common RFC 3164 variants from network devices
+- Optional syslog-wrapped CEF parsing with fixed-field and extension filtering when enabled
+- Automatic extraction of top-level scalar fields from JSON message bodies for filtering in the UI
+- Fast filtering, exclusion queries, live tailing, and timeline view
+- Resizable, reorderable, hideable table columns with optional wrapped cell text
+- Lightweight single-process deployment backed by DuckDB
+
 ## What Sloggo is
 
-- RFC 5424 log ingestion over TCP and UDP
-- Fast search, filtering, and tailing
+- RFC 5424 and RFC 3164 log ingestion over TCP and UDP
+- Fast search, filtering, exclusion, and tailing
 - Up to 1 million logs per second ingestion rate
 - Lightweight and resource-efficient single process with zero config
 - Clean UI built with [data-table-filters](https://github.com/openstatusHQ/data-table-filters)
